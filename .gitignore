@@ -1,0 +1,34 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+
+# Build artifacts
+dist/
+bin/
+*.app/
+desktop/monban
+
+# Environment
+.env
+.env.*
+test/
