@@ -53,7 +53,7 @@ Install the `.deb` or `.rpm` from `bin/`, or run the AppImage directly. Auto-sta
 
 ## Uninstall
 
-Unlock and remove all protected folders first, then:
+Unlock and remove all protected items first, then:
 
 **macOS:**
 ```bash
