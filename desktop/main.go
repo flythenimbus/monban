@@ -3,7 +3,6 @@ package main
 import (
 	"embed"
 	"log"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -89,21 +88,17 @@ func main() {
 	installLaunchAgent()
 	app.StartDeviceWatcher()
 
-	// Show window after app starts (hooks need the run loop active)
-	go func() {
-		time.Sleep(500 * time.Millisecond)
+	// Show window after app is running (hooks need the run loop active).
+	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
 		if app.IsRegistered() {
 			settings := app.GetSettings()
 			if settings.ForceAuthentication {
 				app.EnterFullscreen()
 			}
-			win.Show()
-			win.Focus()
-		} else {
-			win.Show()
-			win.Focus()
 		}
-	}()
+		win.Show()
+		win.Focus()
+	})
 
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)

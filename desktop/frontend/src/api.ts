@@ -38,4 +38,6 @@ export const api = {
 
   updateSettings: (settings: Settings): Promise<void> =>
     App.UpdateSettings(settings as any),
+
+  getSudoGateCommand: (mode: string): Promise<string> => App.GetSudoGateCommand(mode) as any,
 };

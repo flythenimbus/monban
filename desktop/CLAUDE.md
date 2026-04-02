@@ -118,9 +118,16 @@ permanently inaccessible.**
 - Never loads whole file into memory
 - Parallel workers (runtime.NumCPU goroutines)
 
-## 9. Config File
+## 9. Config Files
 
-Location: `~/.config/monban/config.json` (mode 0600)
+Config is split into two files for security. Cryptographic material is stored
+in a root-owned system config that user-level processes cannot tamper with.
+
+### Secure config (root-owned)
+
+Location: `/Library/Application Support/monban/credentials.json` (macOS)
+         `/etc/monban/credentials.json` (Linux)
+Mode: `root:wheel 0644` (world-readable, root-writable)
 
 ```jsonc
 {
@@ -135,6 +142,20 @@ Location: `~/.config/monban/config.json` (mode 0600)
       "wrapped_key": "<base64url>"
     }
   ],
+  "force_authentication": true,
+  "sudo_gate": "off"
+}
+```
+
+Written via OS-specific root escalation (osascript on macOS, pkexec on Linux).
+Changes on key registration/removal and security setting toggles.
+
+### User config (user-owned)
+
+Location: `~/.config/monban/config.json` (mode 0600)
+
+```jsonc
+{
   "vaults": [
     {
       "label": "Documents",
@@ -145,9 +166,32 @@ Location: `~/.config/monban/config.json` (mode 0600)
       "path": "/home/alice/secret.txt",
       "type": "file"
     }
-  ]
+  ],
+  "settings": {
+    "open_on_startup": true
+  }
 }
 ```
+
+A malicious user-level process can edit this file, but the worst outcome is
+losing the vault list (annoying but recoverable — encrypted files remain on
+disk). Credentials, crypto material, and security settings (force_authentication,
+sudo_gate) in the secure config are untouchable without root.
+
+## 9a. Sudo Gate (PAM Integration)
+
+Monban can gate `sudo` behind YubiKey FIDO2 authentication via `pam_exec.so`.
+
+Modes:
+- **off** — no PAM integration
+- **default** — `auth sufficient` — YubiKey success skips password, failure falls through
+- **strict** — `auth required` — YubiKey must succeed, no password fallback
+
+Components:
+- `cmd/pam-helper/` — standalone binary invoked by PAM, reads secure config,
+  prompts for PIN via `/dev/tty`, performs FIDO2 assertion + signature verification
+- `internal/monban/pam.go` — PAM line install/removal with root escalation
+- `pam_darwin.go` / `pam_linux.go` — OS-specific privilege escalation
 
 ## 10. Vault Types
 

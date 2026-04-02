@@ -1,6 +1,7 @@
 package monban
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,23 +44,11 @@ func TestSaveLoadConfigRoundTrip(t *testing.T) {
 	}()
 
 	cfg := &Config{
-		RpID:     "monban.local",
-		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
-		Credentials: []CredentialEntry{
-			{
-				Label:        "Test Key",
-				CredentialID: EncodeB64([]byte("cred-id")),
-				PublicKeyX:   EncodeB64([]byte("pub-x")),
-				PublicKeyY:   EncodeB64([]byte("pub-y")),
-				WrappedKey:   EncodeB64([]byte("wrapped")),
-			},
-		},
 		Vaults: []VaultEntry{
 			{Label: "Documents", Path: "/home/test/Documents"},
 		},
 		Settings: Settings{
-			OpenOnStartup:       true,
-			ForceAuthentication: false,
+			OpenOnStartup: true,
 		},
 	}
 
@@ -72,15 +61,6 @@ func TestSaveLoadConfigRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if loaded.RpID != cfg.RpID {
-		t.Errorf("RpID: got %q, want %q", loaded.RpID, cfg.RpID)
-	}
-	if len(loaded.Credentials) != 1 {
-		t.Fatalf("expected 1 credential, got %d", len(loaded.Credentials))
-	}
-	if loaded.Credentials[0].Label != "Test Key" {
-		t.Errorf("credential label: got %q, want %q", loaded.Credentials[0].Label, "Test Key")
-	}
 	if len(loaded.Vaults) != 1 {
 		t.Fatalf("expected 1 vault, got %d", len(loaded.Vaults))
 	}
@@ -107,7 +87,7 @@ func TestLoadConfigBadPermissions(t *testing.T) {
 	}()
 
 	os.MkdirAll(configDir, 0700)
-	os.WriteFile(configFile, []byte(`{"rp_id":"test"}`), 0644) // too open
+	os.WriteFile(configFile, []byte(`{}`), 0644) // too open
 
 	_, err := LoadConfig()
 	if err == nil {
@@ -174,8 +154,6 @@ func TestSaveLoadConfigWithFileVault(t *testing.T) {
 	}()
 
 	cfg := &Config{
-		RpID:     "monban.local",
-		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
 		Vaults: []VaultEntry{
 			{Label: "Documents", Path: "/home/test/Documents"},
 			{Label: "secret.txt", Path: "/home/test/secret.txt", Type: "file"},
@@ -202,5 +180,60 @@ func TestSaveLoadConfigWithFileVault(t *testing.T) {
 	}
 	if loaded.Vaults[1].Type != "file" {
 		t.Errorf("file vault type: got %q, want %q", loaded.Vaults[1].Type, "file")
+	}
+}
+
+func TestSecureConfigRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	secureFile := filepath.Join(dir, "credentials.json")
+
+	sc := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Credentials: []CredentialEntry{
+			{
+				Label:        "Test Key",
+				CredentialID: EncodeB64([]byte("cred-id")),
+				PublicKeyX:   EncodeB64([]byte("pub-x")),
+				PublicKeyY:   EncodeB64([]byte("pub-y")),
+				WrappedKey:   EncodeB64([]byte("wrapped")),
+			},
+		},
+	}
+
+	// Write directly (tests don't need root escalation)
+	data, err := json.MarshalIndent(sc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secureFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadSecureConfigFrom(secureFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loaded.RpID != sc.RpID {
+		t.Errorf("RpID: got %q, want %q", loaded.RpID, sc.RpID)
+	}
+	if len(loaded.Credentials) != 1 {
+		t.Fatalf("expected 1 credential, got %d", len(loaded.Credentials))
+	}
+	if loaded.Credentials[0].Label != "Test Key" {
+		t.Errorf("credential label: got %q, want %q", loaded.Credentials[0].Label, "Test Key")
+	}
+}
+
+func TestSecureConfigExistsFalse(t *testing.T) {
+	dir := t.TempDir()
+
+	origPath := SecureConfigPath
+	SecureConfigPath = func() string { return filepath.Join(dir, "nonexistent.json") }
+	defer func() { SecureConfigPath = origPath }()
+
+	if SecureConfigExists() {
+		t.Error("SecureConfigExists should return false")
 	}
 }

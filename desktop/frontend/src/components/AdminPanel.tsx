@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
+import { Clipboard } from "@wailsio/runtime";
 import { api } from "../api";
 import { friendlyError } from "../errors";
 import { useAutoResize } from "../useAutoResize";
-import { Toggle, Tabs, Input, Alert } from "./ui";
-import type { VaultStatus, KeyInfo, Settings } from "../types";
+import { Toggle, Tabs, Input, Select, Alert } from "./ui";
+import type { VaultStatus, KeyInfo, Settings, SudoGateMode } from "../types";
 
 export function AdminPanel() {
   const contentRef = useAutoResize();
@@ -12,6 +13,7 @@ export function AdminPanel() {
   const [settings, setSettings] = useState<Settings>({
     open_on_startup: true,
     force_authentication: true,
+    sudo_gate: "off",
   });
   const [error, setError] = useState("");
 
@@ -43,6 +45,17 @@ export function AdminPanel() {
     }
   };
 
+  const handleSetting = async <K extends keyof Settings>(key: K, value: Settings[K]) => {
+    const updated = { ...settings, [key]: value };
+    setSettings(updated);
+    try {
+      await api.updateSettings(updated);
+    } catch (err: any) {
+      setError(friendlyError(err));
+      setSettings(settings);
+    }
+  };
+
   return (
     <div ref={contentRef} className="gradient-bg flex flex-col p-6 pt-14">
       <div className="flex items-center justify-between mb-5">
@@ -65,6 +78,7 @@ export function AdminPanel() {
               <GeneralTab
                 settings={settings}
                 onToggle={handleToggle}
+                onSetting={handleSetting}
                 vaults={vaults}
                 onError={setError}
                 onRefresh={refresh}
@@ -91,18 +105,32 @@ export function AdminPanel() {
 function GeneralTab({
   settings,
   onToggle,
+  onSetting,
   vaults,
   onError,
   onRefresh,
 }: {
   settings: Settings;
   onToggle: (key: keyof Settings) => void;
+  onSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
   vaults: VaultStatus[];
   onError: (msg: string) => void;
   onRefresh: () => Promise<void>;
 }) {
   const [inputPath, setInputPath] = useState("");
   const [adding, setAdding] = useState(false);
+  const [sudoCmd, setSudoCmd] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const handleSudoGate = async (value: SudoGateMode) => {
+    onSetting("sudo_gate", value);
+    try {
+      const cmd = await api.getSudoGateCommand(value);
+      setSudoCmd(cmd || "");
+    } catch {
+      setSudoCmd("");
+    }
+  };
 
   const handleAdd = async () => {
     if (!inputPath) return;
@@ -158,6 +186,36 @@ function GeneralTab({
           </div>
           <Toggle checked={settings.force_authentication} onChange={() => onToggle("force_authentication")} label="Force authentication" />
         </div>
+        <div className="flex items-center justify-between px-4 py-3">
+          <div>
+            <div className="text-sm font-medium text-text">Sudo gate</div>
+            <div className="text-xs text-text-secondary">Require YubiKey for sudo</div>
+          </div>
+          <Select
+            label="Sudo gate"
+            value={settings.sudo_gate || "off"}
+            onChange={(v) => handleSudoGate(v as SudoGateMode)}
+            options={[
+              { value: "off", label: "Off" },
+              { value: "default", label: "Default" },
+              { value: "strict", label: "Strict" },
+            ]}
+          />
+        </div>
+        {sudoCmd && (
+          <div className="px-4 py-3">
+            <div className="text-xs text-text-secondary mb-2">Run in Terminal to apply:</div>
+            <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
+              <code className="text-xs font-mono text-white/90 break-all flex-1">{sudoCmd}</code>
+              <button
+                onClick={() => { Clipboard.SetText(sudoCmd); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                className="shrink-0 text-xs text-accent hover:text-accent/80 transition-colors cursor-pointer font-medium"
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div>

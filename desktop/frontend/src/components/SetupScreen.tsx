@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "../api";
 import { friendlyError } from "../errors";
 import { useAutoResize } from "../useAutoResize";
-import { Input, Alert, StatusText, GlassCard } from "./ui";
+import { Input, Alert, StatusText, GlassCard, Logo } from "./ui";
 import type { SetupState } from "../types";
 
 interface Props {
@@ -48,10 +48,10 @@ export function SetupScreen({ onComplete }: Props) {
          className="gradient-bg flex flex-col items-center justify-center p-8 pt-14 pb-8 select-none"
          style={{ WebkitAppRegion: "drag" } as any}>
 
-      <div className="mb-6 opacity-80">
+      <div className="mb-6">
         {state === "success"
-          ? <img src="/checkmark.svg" alt="Success" className="w-16 h-16" />
-          : <img src="/key.svg" alt="Key" className="w-16 h-16" />}
+          ? <img src="/checkmark.svg" alt="Success" className="w-16 h-16 opacity-80" />
+          : <Logo className="w-24 h-24" />}
       </div>
 
       <GlassCard style={{ WebkitAppRegion: "no-drag" } as any}>

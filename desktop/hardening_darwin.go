@@ -156,6 +156,7 @@ static void stopEventTap() {
         g_eventTap = NULL;
     }
 }
+
 */
 import "C"
 
@@ -164,6 +165,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 var globalApp *App
@@ -195,20 +198,26 @@ func PromptAccessibilityPermission() bool {
 }
 
 // EnterKioskMode activates full lockdown: hides dock, menu bar, blocks shortcuts.
+// Must run on the main thread (AppKit requirement).
 func EnterKioskMode() {
-	log.Printf("monban: entering kiosk mode (accessibility=%v)", HasAccessibilityPermission())
-	C.enterKioskMode()
-	if C.startEventTap() != 0 {
-		log.Println("monban: could not start event tap (accessibility not granted?)")
-	} else {
-		log.Println("monban: event tap started successfully")
-	}
+	application.InvokeSync(func() {
+		log.Printf("monban: entering kiosk mode (accessibility=%v)", HasAccessibilityPermission())
+		C.enterKioskMode()
+		if C.startEventTap() != 0 {
+			log.Println("monban: could not start event tap (accessibility not granted?)")
+		} else {
+			log.Println("monban: event tap started successfully")
+		}
+	})
 }
 
 // ExitKioskMode restores normal desktop behavior.
+// Must run on the main thread (AppKit requirement).
 func ExitKioskMode() {
-	C.stopEventTap()
-	C.exitKioskMode()
+	application.InvokeSync(func() {
+		C.stopEventTap()
+		C.exitKioskMode()
+	})
 }
 
 //export goOnSleep
