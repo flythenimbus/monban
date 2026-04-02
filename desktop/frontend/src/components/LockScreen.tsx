@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { api } from "../api";
 import { friendlyError } from "../errors";
 import { useAutoResize } from "../useAutoResize";
-import { Input, Alert, StatusText, GlassCard } from "./ui";
+import { Input, Alert, StatusText, GlassCard, Logo } from "./ui";
 import type { LockState, Settings } from "../types";
 
 interface Props {
@@ -51,7 +51,7 @@ export function LockScreen({ onUnlock }: Props) {
          style={{ WebkitAppRegion: "drag" } as any}>
 
       <div className="mb-6 opacity-80">
-        <img src="/lock.svg" alt="Lock" className="w-24 h-24" />
+        <Logo />
       </div>
 
       <GlassCard style={{ WebkitAppRegion: "no-drag" } as any}>
