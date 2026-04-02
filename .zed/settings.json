@@ -1,0 +1,13 @@
+{
+  "lsp": {
+    "gopls": {
+      "initialization_options": {
+        "build.env": {
+          "CGO_ENABLED": "1",
+          "CGO_CFLAGS": "-I/opt/homebrew/include",
+          "CGO_LDFLAGS": "-L/opt/homebrew/lib -lfido2",
+        },
+      },
+    },
+  },
+}

@@ -38,9 +38,18 @@ type DiskSpaceInfo struct {
 	SafeToMigrate bool    `json:"safe_to_migrate"`
 }
 
+// CombinedSettings is the frontend-facing settings object that merges
+// fields from both user config and secure config.
+type CombinedSettings struct {
+	OpenOnStartup       bool   `json:"open_on_startup"`
+	ForceAuthentication bool   `json:"force_authentication"`
+	SudoGate            string `json:"sudo_gate"`
+}
+
 type App struct {
 	mu           sync.Mutex
 	config       *monban.Config
+	secureCfg    *monban.SecureConfig
 	locked       bool
 	masterSecret []byte // in-memory only, zeroed on lock
 	encKey       []byte // derived file encryption key, zeroed on lock
@@ -135,43 +144,112 @@ func (a *App) IsLocked() bool {
 }
 
 func (a *App) IsRegistered() bool {
-	return monban.ConfigExists()
+	return monban.SecureConfigExists()
 }
 
-// GetSettings returns the current settings.
-func (a *App) GetSettings() monban.Settings {
+// GetSettings returns the combined settings from both configs.
+func (a *App) GetSettings() CombinedSettings {
 	cfg, err := monban.LoadConfig()
 	if err != nil {
-		return monban.Settings{OpenOnStartup: true, ForceAuthentication: true}
+		cfg = &monban.Config{Settings: monban.Settings{OpenOnStartup: true}}
 	}
-	return cfg.Settings
+
+	sc, err := monban.LoadSecureConfig()
+	if err != nil {
+		sc = &monban.SecureConfig{ForceAuthentication: true}
+	}
+
+	return CombinedSettings{
+		OpenOnStartup:       cfg.Settings.OpenOnStartup,
+		ForceAuthentication: sc.ForceAuthentication,
+		SudoGate:            sc.SudoGate,
+	}
 }
 
-// UpdateSettings saves settings to config and applies side effects.
-func (a *App) UpdateSettings(settings monban.Settings) error {
+// UpdateSettings saves settings, routing each field to the appropriate config.
+// Sensitive settings (force_authentication, sudo_gate) go to the secure config.
+// All privileged writes are batched into a single root escalation prompt.
+func (a *App) UpdateSettings(settings CombinedSettings) error {
+	// --- User config (no escalation) ---
 	cfg, err := monban.LoadConfig()
 	if err != nil {
 		return err
 	}
-	prev := cfg.Settings
-	cfg.Settings = settings
+	cfg.Settings.OpenOnStartup = settings.OpenOnStartup
 	if err := monban.SaveConfig(cfg); err != nil {
 		return err
 	}
 
-	// Apply open on startup
 	if settings.OpenOnStartup {
 		installLaunchAgent()
 	} else {
 		removeLaunchAgent()
 	}
 
-	// Only prompt for accessibility when force authentication is being turned on
-	if settings.ForceAuthentication && !prev.ForceAuthentication && !HasAccessibilityPermission() {
+	// --- Secure config (single batched root escalation) ---
+	sc, err := monban.LoadSecureConfig()
+	if err != nil {
+		return nil // not registered yet
+	}
+
+	prevForceAuth := sc.ForceAuthentication
+	prevSudoGate := sc.SudoGate
+	sudoGateChanged := settings.SudoGate != prevSudoGate
+	secureChanged := settings.ForceAuthentication != prevForceAuth || sudoGateChanged
+
+	if !secureChanged {
+		return nil
+	}
+
+	// Build all privileged writes for a single escalation.
+	var writes []monban.PrivilegedWrite
+
+	// 1. Updated secure config
+	sc.ForceAuthentication = settings.ForceAuthentication
+	sc.SudoGate = settings.SudoGate
+	scData, err := monban.MarshalSecureConfig(sc)
+	if err != nil {
+		return err
+	}
+	writes = append(writes, monban.PrivilegedWrite{
+		Path:      monban.SecureConfigPath(),
+		Content:   string(scData),
+		Mode:      0644,
+		MkdirPath: monban.SecureConfigDir(),
+	})
+
+	// 2. PAM config update (if sudo gate changed)
+	//    On macOS Tahoe+, /etc/pam.d/ is TCC-protected and cannot be written
+	//    via osascript. The PAM file must be installed via Terminal with sudo.
+	//    We provide the command via GetSudoGateCommand() for the UI to display.
+
+	// Single privilege escalation for all writes.
+	if err := monban.BatchPrivilegedWrites(writes); err != nil {
+		return fmt.Errorf("applying secure settings: %w", err)
+	}
+
+	// Post-escalation side effects
+	if settings.ForceAuthentication && !prevForceAuth && !HasAccessibilityPermission() {
 		PromptAccessibilityPermission()
 	}
 
 	return nil
+}
+
+// GetSudoGateCommand returns the terminal command the user should run to
+// install or remove the sudo gate PAM config. On macOS Tahoe+, /etc/pam.d/
+// is TCC-protected and can only be written from Terminal with sudo.
+func (a *App) GetSudoGateCommand(mode string) (string, error) {
+	helperSrc, err := monban.PamHelperPath()
+	if err != nil {
+		return "", err
+	}
+
+	if mode == "" || mode == "off" {
+		return fmt.Sprintf("sudo '%s' --uninstall", helperSrc), nil
+	}
+
+	return fmt.Sprintf("sudo '%s' --install %s", helperSrc, mode), nil
 }
 
 // DetectDevice checks if a FIDO2 device is connected.
@@ -192,20 +270,20 @@ func (a *App) Register(pin string, label string) error {
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
-	var cfg *monban.Config
+	var sc *monban.SecureConfig
 	var hmacSalt []byte
 	var masterSecret []byte
 
-	if monban.ConfigExists() {
+	if monban.SecureConfigExists() {
 		// Adding to existing config — must be unlocked
 		if a.locked || a.masterSecret == nil {
 			return fmt.Errorf("must be unlocked to add a new key")
 		}
-		cfg, err = monban.LoadConfig()
+		sc, err = monban.LoadSecureConfig()
 		if err != nil {
-			return fmt.Errorf("loading config: %w", err)
+			return fmt.Errorf("loading secure config: %w", err)
 		}
-		hmacSalt, err = monban.DecodeB64(cfg.HmacSalt)
+		hmacSalt, err = monban.DecodeB64(sc.HmacSalt)
 		if err != nil {
 			return fmt.Errorf("decoding hmac salt: %w", err)
 		}
@@ -220,15 +298,24 @@ func (a *App) Register(pin string, label string) error {
 		if err != nil {
 			return err
 		}
-		cfg = &monban.Config{
-			RpID:        "monban.local",
-			HmacSalt:    monban.EncodeB64(hmacSalt),
-			Credentials: []monban.CredentialEntry{},
-			Vaults:      []monban.VaultEntry{},
-			Settings: monban.Settings{
-				OpenOnStartup:       true,
-				ForceAuthentication: true,
-			},
+		sc = &monban.SecureConfig{
+			RpID:                "monban.local",
+			HmacSalt:            monban.EncodeB64(hmacSalt),
+			Credentials:         []monban.CredentialEntry{},
+			ForceAuthentication: true,
+		}
+
+		// Create user config if it doesn't exist
+		if !monban.ConfigExists() {
+			cfg := &monban.Config{
+				Vaults: []monban.VaultEntry{},
+				Settings: monban.Settings{
+					OpenOnStartup: true,
+				},
+			}
+			if err := monban.SaveConfig(cfg); err != nil {
+				return fmt.Errorf("saving user config: %w", err)
+			}
 		}
 	}
 
@@ -260,8 +347,8 @@ func (a *App) Register(pin string, label string) error {
 		return fmt.Errorf("wrapping master secret: %w", err)
 	}
 
-	// Add credential to config
-	cfg.Credentials = append(cfg.Credentials, monban.CredentialEntry{
+	// Add credential to secure config
+	sc.Credentials = append(sc.Credentials, monban.CredentialEntry{
 		Label:        label,
 		CredentialID: monban.EncodeB64(cred.ID),
 		PublicKeyX:   monban.EncodeB64(cred.PubX),
@@ -269,8 +356,9 @@ func (a *App) Register(pin string, label string) error {
 		WrappedKey:   monban.EncodeB64(wrapped),
 	})
 
-	if err := monban.SaveConfig(cfg); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+	// Save secure config (root escalation)
+	if err := monban.SaveSecureConfig(sc); err != nil {
+		return fmt.Errorf("saving secure config: %w", err)
 	}
 
 	// Derive encryption key and unlock
@@ -279,7 +367,9 @@ func (a *App) Register(pin string, label string) error {
 		return err
 	}
 
+	cfg, _ := monban.LoadConfig()
 	a.config = cfg
+	a.secureCfg = sc
 	a.masterSecret = masterSecret
 	a.encKey = encKey
 	a.locked = false
@@ -292,23 +382,23 @@ func (a *App) Unlock(pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+		return fmt.Errorf("loading secure config: %w", err)
 	}
 
-	if len(cfg.Credentials) == 0 {
+	if len(sc.Credentials) == 0 {
 		return fmt.Errorf("no credentials registered")
 	}
 
-	hmacSalt, err := monban.DecodeB64(cfg.HmacSalt)
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
 	if err != nil {
 		return fmt.Errorf("decoding hmac salt: %w", err)
 	}
 
 	// Collect all credential IDs
-	credIDs := make([][]byte, len(cfg.Credentials))
-	for i, c := range cfg.Credentials {
+	credIDs := make([][]byte, len(sc.Credentials))
+	for i, c := range sc.Credentials {
 		id, err := monban.DecodeB64(c.CredentialID)
 		if err != nil {
 			return fmt.Errorf("decoding credential ID: %w", err)
@@ -336,8 +426,8 @@ func (a *App) Unlock(pin string) error {
 	// Try unwrapping each credential's wrapped key — AES-GCM auth tag validates only for the correct one
 	var masterSecret []byte
 	var matchedCred *monban.CredentialEntry
-	for i := range cfg.Credentials {
-		wrapped, err := monban.DecodeB64(cfg.Credentials[i].WrappedKey)
+	for i := range sc.Credentials {
+		wrapped, err := monban.DecodeB64(sc.Credentials[i].WrappedKey)
 		if err != nil {
 			continue
 		}
@@ -346,7 +436,7 @@ func (a *App) Unlock(pin string) error {
 			continue // wrong key, try next
 		}
 		masterSecret = secret
-		matchedCred = &cfg.Credentials[i]
+		matchedCred = &sc.Credentials[i]
 		break
 	}
 
@@ -374,6 +464,12 @@ func (a *App) Unlock(pin string) error {
 		return err
 	}
 
+	// Load user config for vault list
+	cfg, err := monban.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("loading config: %w", err)
+	}
+
 	// Unlock all vaults
 	for _, v := range cfg.Vaults {
 		if v.IsFile() {
@@ -394,6 +490,7 @@ func (a *App) Unlock(pin string) error {
 	}
 
 	a.config = cfg
+	a.secureCfg = sc
 	a.masterSecret = masterSecret
 	a.encKey = encKey
 	a.locked = false
@@ -443,7 +540,7 @@ func (a *App) GetStatus() AppStatus {
 
 	status := AppStatus{
 		Locked:     a.locked,
-		Registered: monban.ConfigExists(),
+		Registered: monban.SecureConfigExists(),
 	}
 
 	cfg, err := monban.LoadConfig()
@@ -471,13 +568,13 @@ func (a *App) GetStatus() AppStatus {
 
 // ListKeys returns information about registered YubiKeys.
 func (a *App) ListKeys() ([]KeyInfo, error) {
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	keys := make([]KeyInfo, len(cfg.Credentials))
-	for i, c := range cfg.Credentials {
+	keys := make([]KeyInfo, len(sc.Credentials))
+	for i, c := range sc.Credentials {
 		keys[i] = KeyInfo{
 			Label:        c.Label,
 			CredentialID: c.CredentialID,
@@ -491,17 +588,17 @@ func (a *App) RemoveKey(credentialID string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return err
 	}
 
-	if len(cfg.Credentials) <= 1 {
+	if len(sc.Credentials) <= 1 {
 		return fmt.Errorf("cannot remove the last registered key")
 	}
 
 	idx := -1
-	for i, c := range cfg.Credentials {
+	for i, c := range sc.Credentials {
 		if c.CredentialID == credentialID {
 			idx = i
 			break
@@ -511,12 +608,14 @@ func (a *App) RemoveKey(credentialID string) error {
 		return fmt.Errorf("credential not found")
 	}
 
-	cfg.Credentials = append(cfg.Credentials[:idx], cfg.Credentials[idx+1:]...)
-	if err := monban.SaveConfig(cfg); err != nil {
-		return fmt.Errorf("saving config: %w", err)
+	sc.Credentials = append(sc.Credentials[:idx], sc.Credentials[idx+1:]...)
+
+	// Save secure config (root escalation)
+	if err := monban.SaveSecureConfig(sc); err != nil {
+		return fmt.Errorf("saving secure config: %w", err)
 	}
 
-	a.config = cfg
+	a.secureCfg = sc
 	return nil
 }
 

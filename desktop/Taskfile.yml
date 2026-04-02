@@ -27,6 +27,7 @@ tasks:
     summary: Generates Wails frontend bindings from Go services
     cmds:
       - wails3 generate bindings
+
   build:
     summary: Builds the application
     cmds:

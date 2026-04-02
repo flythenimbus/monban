@@ -26,7 +26,10 @@ export interface DiskSpaceInfo {
   safe_to_migrate: boolean;
 }
 
+export type SudoGateMode = "off" | "default" | "strict";
+
 export interface Settings {
   open_on_startup: boolean;
   force_authentication: boolean;
+  sudo_gate: SudoGateMode;
 }

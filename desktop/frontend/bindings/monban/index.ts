@@ -8,6 +8,7 @@ export {
 
 export {
     AppStatus,
+    CombinedSettings,
     DiskSpaceInfo,
     KeyInfo,
     VaultStatus

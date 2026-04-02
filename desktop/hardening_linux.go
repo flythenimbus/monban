@@ -34,10 +34,11 @@ func RegisterHardeningHooks(app *App) {
 }
 
 // Kiosk mode stubs for Linux (not yet implemented)
-func HasAccessibilityPermission() bool  { return false }
+func HasAccessibilityPermission() bool   { return false }
 func PromptAccessibilityPermission() bool { return false }
-func EnterKioskMode()                   {}
-func ExitKioskMode()                    {}
+func EnterKioskMode()                    {}
+func ExitKioskMode()                     {}
+
 
 // watchSleep listens for systemd-logind PrepareForSleep signals.
 func watchSleep() {

@@ -38,6 +38,39 @@ export class AppStatus {
     }
 }
 
+/**
+ * CombinedSettings is the frontend-facing settings object that merges
+ * fields from both user config and secure config.
+ */
+export class CombinedSettings {
+    "open_on_startup": boolean;
+    "force_authentication": boolean;
+    "sudo_gate": string;
+
+    /** Creates a new CombinedSettings instance. */
+    constructor($$source: Partial<CombinedSettings> = {}) {
+        if (!("open_on_startup" in $$source)) {
+            this["open_on_startup"] = false;
+        }
+        if (!("force_authentication" in $$source)) {
+            this["force_authentication"] = false;
+        }
+        if (!("sudo_gate" in $$source)) {
+            this["sudo_gate"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new CombinedSettings instance from a string or object.
+     */
+    static createFrom($$source: any = {}): CombinedSettings {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new CombinedSettings($$parsedSource as Partial<CombinedSettings>);
+    }
+}
+
 export class DiskSpaceInfo {
     "folder_gb": number;
     "free_gb": number;

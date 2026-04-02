@@ -8,9 +8,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as application$0 from "../github.com/wailsapp/wails/v3/pkg/application/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as monban$0 from "./internal/monban/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -62,9 +59,9 @@ export function ExitFullscreen(): $CancellablePromise<void> {
 }
 
 /**
- * GetSettings returns the current settings.
+ * GetSettings returns the combined settings from both configs.
  */
-export function GetSettings(): $CancellablePromise<monban$0.Settings> {
+export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
     return $Call.ByID(2554697378).then(($result: any) => {
         return $$createType1($result);
     });
@@ -77,6 +74,15 @@ export function GetStatus(): $CancellablePromise<$models.AppStatus> {
     return $Call.ByID(1043986649).then(($result: any) => {
         return $$createType2($result);
     });
+}
+
+/**
+ * GetSudoGateCommand returns the terminal command the user should run to
+ * install or remove the sudo gate PAM config. On macOS Tahoe+, /etc/pam.d/
+ * is TCC-protected and can only be written from Terminal with sudo.
+ */
+export function GetSudoGateCommand(mode: string): $CancellablePromise<string> {
+    return $Call.ByID(2404724622, mode);
 }
 
 export function IsLocked(): $CancellablePromise<boolean> {
@@ -152,15 +158,17 @@ export function Unlock(pin: string): $CancellablePromise<void> {
 }
 
 /**
- * UpdateSettings saves settings to config and applies side effects.
+ * UpdateSettings saves settings, routing each field to the appropriate config.
+ * Sensitive settings (force_authentication, sudo_gate) go to the secure config.
+ * All privileged writes are batched into a single root escalation prompt.
  */
-export function UpdateSettings(settings: monban$0.Settings): $CancellablePromise<void> {
+export function UpdateSettings(settings: $models.CombinedSettings): $CancellablePromise<void> {
     return $Call.ByID(2894041249, settings);
 }
 
 // Private type creation functions
 const $$createType0 = $models.DiskSpaceInfo.createFrom;
-const $$createType1 = monban$0.Settings.createFrom;
+const $$createType1 = $models.CombinedSettings.createFrom;
 const $$createType2 = $models.AppStatus.createFrom;
 const $$createType3 = $models.KeyInfo.createFrom;
 const $$createType4 = $Create.Array($$createType3);
