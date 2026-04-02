@@ -3,11 +3,11 @@
 ## 1. Project Overview
 
 Monban is a desktop post-login security layer for macOS and Linux that encrypts
-user-configured folders using a YubiKey FIDO2 assertion (PIN + physical touch)
-as the sole unlock mechanism. Files are encrypted with AES-256-GCM using a key
-derived from the YubiKey's hmac-secret extension. The lock is cryptographic —
-folders contain only ciphertext until the YubiKey authenticates. No FUSE, no
-external dependencies at runtime.
+user-configured folders and individual files using a YubiKey FIDO2 assertion
+(PIN + physical touch) as the sole unlock mechanism. Files are encrypted with
+AES-256-GCM using a key derived from the YubiKey's hmac-secret extension. The
+lock is cryptographic — protected items contain only ciphertext until the
+YubiKey authenticates. No FUSE, no external dependencies at runtime.
 
 ## 2. Architecture Decisions
 
@@ -138,21 +138,45 @@ Location: `~/.config/monban/config.json` (mode 0600)
   "vaults": [
     {
       "label": "Documents",
-      "original": "/home/alice/Documents",
-      "vault_path": "/home/alice/.monban-vaults/Documents"
+      "path": "/home/alice/Documents"
+    },
+    {
+      "label": "secret.txt",
+      "path": "/home/alice/secret.txt",
+      "type": "file"
     }
   ]
 }
 ```
 
-## 10. Vault Safety — Write-Ahead Journal
+## 10. Vault Types
+
+### Folder vaults (default)
+Encrypt all files in a directory into `.monban-data/` with hashed filenames.
+An encrypted manifest maps hashed names back to originals.
+
+### File vaults (`type: "file"`)
+Encrypt a single file into an opaque directory next to the original:
+```
+/path/to/.monban-<hash16>/
+  data.enc                  — encrypted file content
+  .monban-manifest.enc      — encrypted manifest (original name, perms, modtime)
+```
+The `<hash16>` is the first 16 hex chars of SHA-256(absolute file path).
+The original filename is not visible on disk when locked. The manifest
+format is the same as folder vaults (single-entry `Manifest` struct).
+
+The `VaultEntry.Type` field is `"file"` for file vaults. Omitted or empty
+defaults to folder behavior (backward compatible).
+
+## 11. Vault Safety — Write-Ahead Journal
 
 Lock/unlock use a journal for crash recovery:
 1. Write journal state before each phase
 2. Never delete a copy until the other copy is verified
 3. On startup, check for stale journals and recover
 
-## 11. cgo Build Environment
+## 12. cgo Build Environment
 
 ```bash
 # macOS (Apple Silicon):
@@ -165,7 +189,7 @@ CGO_LDFLAGS="-lfido2"
 # Requires: libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
-## 12. Commands
+## 13. Commands
 
 ```bash
 # Generate Wails bindings (needed before frontend build)
