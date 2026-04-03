@@ -148,7 +148,7 @@ func deriveChunkNonce(fileNonce []byte, chunkIdx uint64) []byte {
 	// XOR the last 8 bytes with the chunk index
 	idxBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(idxBytes, chunkIdx)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		nonce[len(nonce)-8+i] ^= idxBytes[i]
 	}
 	return nonce

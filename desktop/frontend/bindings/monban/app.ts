@@ -94,7 +94,7 @@ export function IsRegistered(): $CancellablePromise<boolean> {
 }
 
 /**
- * ListKeys returns information about registered YubiKeys.
+ * ListKeys returns information about registered security keys.
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(1130532105).then(($result: any) => {
@@ -144,7 +144,7 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
 }
 
 /**
- * StartDeviceWatcher polls for YubiKey presence and locks when removed.
+ * StartDeviceWatcher polls for security key presence and locks when removed.
  */
 export function StartDeviceWatcher(): $CancellablePromise<void> {
     return $Call.ByID(1189108695);

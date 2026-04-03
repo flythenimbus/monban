@@ -58,18 +58,18 @@ export function LockScreen({ onUnlock }: Props) {
         <div className="text-center">
           <h1 className="text-lg font-semibold text-text">Monban</h1>
           <p aria-live="polite" className="text-text-secondary text-sm mt-1">
-            {!deviceConnected ? "Insert your YubiKey to continue" : "Enter PIN and touch your YubiKey"}
+            {!deviceConnected ? "Insert your security key to continue" : "Enter PIN and touch your security key"}
           </p>
         </div>
 
         {!deviceConnected ? (
-          <StatusText pulse>Waiting for YubiKey...</StatusText>
+          <StatusText pulse>Waiting for security key...</StatusText>
         ) : (
           <>
             <Input
               type="password"
-              label="YubiKey PIN"
-              placeholder="YubiKey PIN"
+              label="Security key PIN"
+              placeholder="Security key PIN"
               value={pin}
               onChange={(e) => setPin(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
@@ -80,7 +80,7 @@ export function LockScreen({ onUnlock }: Props) {
             {state === "error" && <Alert>{error}</Alert>}
 
             {state === "waiting_touch" && (
-              <StatusText variant="accent" pulse>Touch your YubiKey...</StatusText>
+              <StatusText variant="accent" pulse>Touch your security key...</StatusText>
             )}
 
             {state === "success" && (

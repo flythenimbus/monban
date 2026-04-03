@@ -9,7 +9,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// DeriveWrappingKey derives an AES-256 key from the YubiKey's hmac-secret output.
+// DeriveWrappingKey derives an AES-256 key from the security key's hmac-secret output.
 // Used to encrypt/decrypt the master secret for multi-key support.
 func DeriveWrappingKey(hmacSecret, hmacSalt []byte) ([]byte, error) {
 	r := hkdf.New(sha256.New, hmacSecret, hmacSalt, []byte("monban-keywrap-v1"))
@@ -32,7 +32,7 @@ func DeriveEncryptionKey(masterSecret, hmacSalt []byte) ([]byte, error) {
 }
 
 // GenerateMasterSecret generates a random 64-byte master secret.
-// This secret is wrapped by each YubiKey's hmac-secret derived key.
+// This secret is wrapped by each security key's hmac-secret derived key.
 func GenerateMasterSecret() ([]byte, error) {
 	secret := make([]byte, 64)
 	if _, err := rand.Read(secret); err != nil {

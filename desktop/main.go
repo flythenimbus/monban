@@ -19,7 +19,7 @@ func main() {
 
 	wailsApp := application.New(application.Options{
 		Name:        "Monban",
-		Description: "YubiKey-based folder encryption",
+		Description: "Security key-based folder encryption",
 		Services: []application.Service{
 			application.NewService(app),
 		},

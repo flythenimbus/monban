@@ -7,8 +7,6 @@ import (
 )
 
 func pamSudoPath() string {
-	// macOS protects /etc/pam.d/sudo with SIP. The sudo config includes
-	// sudo_local as a user-customizable override, not SIP-protected.
 	return "/etc/pam.d/sudo_local"
 }
 
