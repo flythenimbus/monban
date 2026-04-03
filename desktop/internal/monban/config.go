@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-// CredentialEntry holds a registered YubiKey's FIDO2 credential and wrapped master secret.
+// CredentialEntry holds a registered security key's FIDO2 credential and wrapped master secret.
 type CredentialEntry struct {
 	Label        string `json:"label"`
 	CredentialID string `json:"credential_id"` // base64url

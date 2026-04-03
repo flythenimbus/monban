@@ -43,7 +43,7 @@ Exec=%s
 Icon=monban
 Terminal=false
 X-GNOME-Autostart-enabled=true
-Comment=YubiKey-based folder encryption
+Comment=Security key-based folder encryption
 `, execPath)
 
 	path := autostartPath()

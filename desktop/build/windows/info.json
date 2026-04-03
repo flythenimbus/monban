@@ -6,7 +6,7 @@
 		"0000": {
 			"ProductVersion": "0.1.0",
 			"CompanyName": "Monban",
-			"FileDescription": "YubiKey-based folder encryption",
+			"FileDescription": "Security key-based folder encryption",
 			"LegalCopyright": "(c) 2026, Monban",
 			"ProductName": "Monban",
 			"Comments": "This is a comment"

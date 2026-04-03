@@ -57,27 +57,27 @@ export function SetupScreen({ onComplete }: Props) {
       <GlassCard style={{ WebkitAppRegion: "no-drag" } as any}>
         <div className="text-center">
           <h1 className="text-lg font-semibold text-text">Welcome to Monban</h1>
-          <p className="text-text-secondary text-sm mt-1">Register your YubiKey to get started</p>
+          <p className="text-text-secondary text-sm mt-1">Register your security key to get started</p>
         </div>
 
         {state === "detect" && (
           <div className="space-y-4">
             <div aria-live="polite" className={`text-center text-sm ${deviceFound ? "text-accent font-medium" : "text-text-secondary"}`}>
-              {deviceFound ? "YubiKey detected" : "Insert your YubiKey..."}
+              {deviceFound ? "Security key detected" : "Insert your security key..."}
             </div>
             {deviceFound && (
               <>
                 <Input
                   type="text"
                   label="Key label"
-                  placeholder="Key label (e.g. YubiKey 5C)"
+                  placeholder="Key label (e.g. YubiKey 5C, Titan, etc.)"
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                 />
                 <Input
                   type="password"
-                  label="YubiKey PIN"
-                  placeholder="YubiKey PIN"
+                  label="Security key PIN"
+                  placeholder="Security key PIN"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleRegister()}
@@ -95,7 +95,7 @@ export function SetupScreen({ onComplete }: Props) {
         )}
 
         {state === "waiting_touch" && (
-          <StatusText variant="accent" pulse>Touch your YubiKey...</StatusText>
+          <StatusText variant="accent" pulse>Touch your security key...</StatusText>
         )}
 
         {state === "success" && (

@@ -61,7 +61,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
         </h1>
 
         <p class="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
-          Monban encrypts your folders and individual files with AES-256-GCM on macOS and Linux, unlocked only by YubiKey PIN + touch. No drivers, no kernel extensions, nothing to configure.
+          Monban encrypts your folders and individual files with AES-256-GCM on macOS and Linux, unlocked only by security key PIN + touch. No drivers, no kernel extensions, nothing to configure.
         </p>
 
         <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -94,7 +94,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
               </div>
               <CardTitle>PIN + touch</CardTitle>
               <CardDescription>
-                Unlocking requires your YubiKey PIN and a physical touch. The secret never leaves the hardware -- the lock is cryptographic, not UI-based.
+                Unlocking requires your security key PIN and a physical touch. The secret never leaves the hardware -- the lock is cryptographic, not UI-based.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -118,7 +118,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
               </div>
               <CardTitle>Multi-key backup</CardTitle>
               <CardDescription>
-                Register multiple YubiKeys per vault. Lose one, use the other. Your master secret is wrapped independently per key via FIDO2 hmac-secret.
+                Register multiple security keys per vault. Lose one, use the other. Your master secret is wrapped independently per key via FIDO2 hmac-secret.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -130,7 +130,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
               </div>
               <CardTitle>Auto-lock</CardTitle>
               <CardDescription>
-                Vaults lock automatically on sleep, logout, app quit, YubiKey removal, and SIGTERM. No chance of leaving files exposed by accident.
+                Vaults lock automatically on sleep, logout, app quit, key removal, and SIGTERM. No chance of leaving files exposed by accident.
               </CardDescription>
             </CardHeader>
           </Card>
@@ -162,6 +162,83 @@ const sponsorUrl = `${githubRepo}/sponsor`;
       </div>
     </section>
 
+    <!-- Works with -->
+    <section class="py-24 px-6 border-t border-border/50">
+      <div class="mx-auto max-w-5xl">
+        <div class="text-center mb-12">
+          <Badge variant="ghost" size="sm" class="mb-4">Compatible Hardware</Badge>
+          <h2 class="text-3xl font-bold tracking-tight mb-3">Works with</h2>
+          <p class="text-muted-foreground max-w-lg mx-auto">Any FIDO2 security key with hmac-secret support.</p>
+        </div>
+
+        <div class="relative overflow-hidden">
+          <div class="flex animate-scroll gap-12 items-center w-max">
+            <div class="flex gap-12 items-center shrink-0">
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/yubikey.svg" alt="YubiKey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">YubiKey</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/google-titan.svg" alt="Google Titan" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">Google Titan</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/solokeys.svg" alt="SoloKeys" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">SoloKeys</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/nitrokey.svg" alt="Nitrokey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">Nitrokey</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/feitian.svg" alt="Feitian" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">Feitian</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/onlykey.svg" alt="OnlyKey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">OnlyKey</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/canokey.svg" alt="CanoKey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">CanoKey</span>
+              </div>
+            </div>
+            <!-- Duplicate for seamless loop -->
+            <div class="flex gap-12 items-center shrink-0">
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/yubikey.svg" alt="YubiKey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">YubiKey</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/google-titan.svg" alt="Google Titan" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">Google Titan</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/solokeys.svg" alt="SoloKeys" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">SoloKeys</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/nitrokey.svg" alt="Nitrokey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">Nitrokey</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/feitian.svg" alt="Feitian" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">Feitian</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/onlykey.svg" alt="OnlyKey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">OnlyKey</span>
+              </div>
+              <div class="flex flex-col items-center gap-3 w-28">
+                <img src="/keys/canokey.svg" alt="CanoKey" class="h-10 opacity-70 hover:opacity-100 transition-opacity" />
+                <span class="text-xs text-muted-foreground">CanoKey</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- How it works -->
     <section class="py-24 px-6 border-t border-border/50">
       <div class="mx-auto max-w-3xl">
@@ -174,7 +251,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
           <div class="flex gap-5">
             <div class="flex shrink-0 size-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-sm">1</div>
             <div>
-              <h3 class="font-semibold text-lg mb-1">Enroll your YubiKey</h3>
+              <h3 class="font-semibold text-lg mb-1">Enroll your security key</h3>
               <p class="text-muted-foreground">Open Monban, plug in your key, and tap to enroll it as your second factor. Add backup keys anytime.</p>
             </div>
           </div>
@@ -195,7 +272,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
             <div class="flex shrink-0 size-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-sm">3</div>
             <div>
               <h3 class="font-semibold text-lg mb-1">PIN + touch to unlock</h3>
-              <p class="text-muted-foreground">Enter your PIN and touch your YubiKey to decrypt. Pull the key out and everything locks instantly.</p>
+              <p class="text-muted-foreground">Enter your PIN and touch your security key to decrypt. Pull the key out and everything locks instantly.</p>
             </div>
           </div>
         </div>

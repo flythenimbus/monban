@@ -64,7 +64,7 @@ func (a *App) SetWindow(w *application.WebviewWindow) {
 	a.window = w
 }
 
-// StartDeviceWatcher polls for YubiKey presence and locks when removed.
+// StartDeviceWatcher polls for security key presence and locks when removed.
 func (a *App) StartDeviceWatcher() {
 	const missThreshold = 2 // require 2 consecutive misses to avoid USB glitches
 	misses := 0
@@ -82,7 +82,7 @@ func (a *App) StartDeviceWatcher() {
 			if err != nil || !connected {
 				misses++
 				if misses >= missThreshold {
-					log.Println("monban: YubiKey removed, locking vaults...")
+					log.Println("monban: security key removed, locking vaults...")
 					if err := a.Lock(); err != nil {
 						log.Printf("monban: error locking on device removal: %v", err)
 					}
@@ -264,7 +264,7 @@ func (a *App) Register(pin string, label string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Register credential on YubiKey
+	// Register credential on security key
 	cred, err := monban.Register(pin)
 	if err != nil {
 		return fmt.Errorf("registration failed: %w", err)
@@ -326,7 +326,7 @@ func (a *App) Register(pin string, label string) error {
 	}
 
 	if len(assertion.HMACSecret) == 0 {
-		return fmt.Errorf("YubiKey did not return hmac-secret")
+		return fmt.Errorf("security key did not return hmac-secret")
 	}
 
 	// Verify the assertion signature
@@ -413,7 +413,7 @@ func (a *App) Unlock(pin string) error {
 	}
 
 	if len(assertion.HMACSecret) == 0 {
-		return fmt.Errorf("YubiKey did not return hmac-secret")
+		return fmt.Errorf("security key did not return hmac-secret")
 	}
 
 	// Derive wrapping key from this assertion's hmac-secret
@@ -542,7 +542,7 @@ func (a *App) GetStatus() AppStatus {
 	return status
 }
 
-// ListKeys returns information about registered YubiKeys.
+// ListKeys returns information about registered security keys.
 func (a *App) ListKeys() ([]KeyInfo, error) {
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {

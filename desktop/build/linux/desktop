@@ -1,7 +1,7 @@
 [Desktop Entry]
 Version=1.0
 Name=Monban
-Comment=YubiKey-based folder encryption
+Comment=Security key-based folder encryption
 # The Exec line includes %u to pass the URL to the application
 Exec=/usr/local/bin/monban %u
 Terminal=false

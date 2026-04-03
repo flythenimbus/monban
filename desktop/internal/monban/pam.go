@@ -6,6 +6,14 @@ import (
 	"strings"
 )
 
+// PrivilegedWrite describes a single file write that requires root.
+type PrivilegedWrite struct {
+	Path      string
+	Content   string
+	Mode      os.FileMode
+	MkdirPath string // optional: create this directory first
+}
+
 const pamTag = "# monban sudo gate"
 
 // PamTag returns the tag used to identify monban PAM lines.
@@ -132,33 +140,6 @@ func writeFilePrivileged(path, content string, mode os.FileMode) error {
 	return RunWithPrivileges(cmd)
 }
 
-// writeTempFile writes content to a temp file and returns its path.
-func writeTempFile(content string) (string, error) {
-	f, err := os.CreateTemp("", "monban-*")
-	if err != nil {
-		return "", fmt.Errorf("creating temp file: %w", err)
-	}
-	path := f.Name()
-	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		os.Remove(path)
-		return "", fmt.Errorf("writing temp file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(path)
-		return "", fmt.Errorf("closing temp file: %w", err)
-	}
-	// Make readable by root when it copies.
-	os.Chmod(path, 0644)
-	return path, nil
-}
-
-// shellQuote wraps a string in single quotes, escaping any embedded single quotes.
-func shellQuote(s string) string {
-	escaped := strings.ReplaceAll(s, "'", "'\\''")
-	return "'" + escaped + "'"
-}
-
 // BatchPrivilegedWrites performs multiple file writes in a single privilege
 // escalation. Each entry maps a destination path to its temp file source.
 // All files are written atomically — if the escalation fails, nothing changes.
@@ -196,12 +177,4 @@ func BatchPrivilegedWrites(writes []PrivilegedWrite) error {
 
 	cmd := strings.Join(parts, " && ")
 	return RunWithPrivileges(cmd)
-}
-
-// PrivilegedWrite describes a single file write that requires root.
-type PrivilegedWrite struct {
-	Path      string
-	Content   string
-	Mode      os.FileMode
-	MkdirPath string // optional: create this directory first
 }

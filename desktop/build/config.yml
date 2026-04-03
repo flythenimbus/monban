@@ -8,7 +8,7 @@ info:
   companyName: "Monban"
   productName: "Monban"
   productIdentifier: "com.monban.app"
-  description: "YubiKey-based folder encryption"
+  description: "Security key-based folder encryption"
   copyright: "(c) 2026, Monban"
   comments: ""
   version: "0.1.0"

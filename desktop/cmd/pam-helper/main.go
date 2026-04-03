@@ -1,5 +1,5 @@
 // monban-pam-helper is a standalone binary invoked by pam_exec.so to gate
-// sudo (and optionally ssh) behind a FIDO2 YubiKey assertion.
+// sudo (and optionally ssh) behind a FIDO2 security key assertion.
 //
 // Usage:
 //
@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	installPath    = "/usr/local/bin/monban-pam-helper"
-	pamModuleDir   = "/usr/local/lib/pam"
-	pamModulePath  = "/usr/local/lib/pam/pam_monban.so"
+	installPath   = "/usr/local/bin/monban-pam-helper"
+	pamModuleDir  = "/usr/local/lib/pam"
+	pamModulePath = "/usr/local/lib/pam/pam_monban.so"
 )
 
 func main() {
@@ -165,7 +165,7 @@ func authenticate() error {
 	}
 	defer tty.Close()
 
-	fmt.Fprint(tty, "monban: YubiKey PIN: ")
+	fmt.Fprint(tty, "monban: security key PIN: ")
 	pinBytes, err := term.ReadPassword(int(tty.Fd()))
 	fmt.Fprintln(tty) // newline after hidden input
 	if err != nil {
@@ -184,7 +184,7 @@ func authenticate() error {
 	}
 
 	// Perform FIDO2 assertion — requires touch + PIN.
-	fmt.Fprint(tty, "monban: touch your YubiKey...\n")
+	fmt.Fprint(tty, "monban: touch your security key...\n")
 	assertion, err := monban.Assert(pin, credIDs, hmacSalt)
 	if err != nil {
 		return fmt.Errorf("FIDO2 assertion failed: %w", err)
@@ -213,7 +213,7 @@ func authenticate() error {
 	}
 
 	if !verified {
-		return fmt.Errorf("assertion verification failed — no matching registered key")
+		return fmt.Errorf("monban: no matching registered key")
 	}
 
 	fmt.Fprint(tty, "monban: authenticated\n")

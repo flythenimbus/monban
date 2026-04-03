@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
+	"slices"
 
 	libfido2 "github.com/keys-pub/go-libfido2"
 )
@@ -35,7 +36,7 @@ func openDevice() (*libfido2.Device, error) {
 		return nil, fmt.Errorf("detecting FIDO2 devices: %w", err)
 	}
 	if len(locs) == 0 {
-		return nil, fmt.Errorf("no FIDO2 device found — insert your YubiKey")
+		return nil, fmt.Errorf("no FIDO2 device found — insert your security key")
 	}
 
 	dev, err := libfido2.NewDevice(locs[0].Path)
@@ -45,7 +46,31 @@ func openDevice() (*libfido2.Device, error) {
 	return dev, nil
 }
 
+// CheckHMACSecret verifies that the connected FIDO2 device supports the
+// hmac-secret extension, which is required for key derivation.
+func CheckHMACSecret() error {
+	dev, err := openDevice()
+	if err != nil {
+		return err
+	}
+
+	info, err := dev.Info()
+	if err != nil {
+		return fmt.Errorf("reading device info: %w", err)
+	}
+
+	if !slices.Contains(info.Extensions, "hmac-secret") {
+		return fmt.Errorf("device does not support hmac-secret — a FIDO2 key with hmac-secret is required")
+	}
+
+	return nil
+}
+
 func Register(pin string) (*FIDOCredential, error) {
+	if err := CheckHMACSecret(); err != nil {
+		return nil, err
+	}
+
 	dev, err := openDevice()
 	if err != nil {
 		return nil, err

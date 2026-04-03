@@ -184,13 +184,6 @@ func IsLocked(folderPath string) bool {
 //
 // The <hash16> is the first 16 hex chars of SHA-256(absolute file path).
 
-// fileVaultDir returns the opaque directory path for a file vault.
-func fileVaultDir(filePath string) string {
-	h := sha256.Sum256([]byte(filePath))
-	name := ".monban-" + hex.EncodeToString(h[:8])
-	return filepath.Join(filepath.Dir(filePath), name)
-}
-
 // IsFileLocked checks if a single file has a locked vault directory.
 func IsFileLocked(filePath string) bool {
 	_, err := os.Stat(filepath.Join(fileVaultDir(filePath), ".monban-manifest.enc"))
@@ -679,4 +672,11 @@ func removeEmptyDirs(root string) {
 	for i := len(dirs) - 1; i >= 0; i-- {
 		_ = os.Remove(dirs[i])
 	}
+}
+
+// fileVaultDir returns the opaque directory path for a file vault.
+func fileVaultDir(filePath string) string {
+	h := sha256.Sum256([]byte(filePath))
+	name := ".monban-" + hex.EncodeToString(h[:8])
+	return filepath.Join(filepath.Dir(filePath), name)
 }
