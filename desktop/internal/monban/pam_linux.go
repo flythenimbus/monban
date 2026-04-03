@@ -9,6 +9,10 @@ func pamSudoPath() string {
 	return "/etc/pam.d/sudo"
 }
 
+func pamSuPath() string {
+	return "/etc/pam.d/su"
+}
+
 func secureConfigDir() string {
 	return "/etc/monban"
 }

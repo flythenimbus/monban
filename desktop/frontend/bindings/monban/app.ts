@@ -20,11 +20,15 @@ export function AddFile(path: string): $CancellablePromise<void> {
     return $Call.ByID(4103961850, path);
 }
 
+export function AddFolder(path: string): $CancellablePromise<void> {
+    return $Call.ByID(2264495576, path);
+}
+
 /**
  * AddFolder adds a folder to the protected list. Files are encrypted in place on lock.
  */
-export function AddFolder(path: string): $CancellablePromise<void> {
-    return $Call.ByID(2264495576, path);
+export function AddPath(path: string): $CancellablePromise<void> {
+    return $Call.ByID(2553945579, path);
 }
 
 /**

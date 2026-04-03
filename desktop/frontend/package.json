@@ -7,7 +7,9 @@
     "dev": "vite",
     "build:dev": "tsc && vite build --minify false --mode development",
     "build": "tsc && vite build --mode production",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "biome check src",
+    "lint:fix": "biome check --fix --unsafe src"
   },
   "dependencies": {
     "@wailsio/runtime": "latest",
@@ -15,6 +17,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.10",
     "@tailwindcss/vite": "^4.0.0",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
