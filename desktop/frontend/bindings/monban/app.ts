@@ -110,7 +110,7 @@ export function Lock(): $CancellablePromise<void> {
 }
 
 /**
- * Register creates a new FIDO2 credential and initializes the config.
+ * Register creates a new FIDO2 credential and wraps the master secret with it.
  * If this is the first credential, generates the master secret and hmac salt.
  * If credentials already exist, wraps the existing master secret with the new key.
  */
@@ -137,6 +137,13 @@ export function RemoveKey(credentialID: string): $CancellablePromise<void> {
  */
 export function ResizeWindow(width: number, height: number): $CancellablePromise<void> {
     return $Call.ByID(2916372761, width, height);
+}
+
+/**
+ * RevealSecureConfig opens the system file manager to the secure config directory.
+ */
+export function RevealSecureConfig(): $CancellablePromise<void> {
+    return $Call.ByID(752810371);
 }
 
 export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePromise<void> {

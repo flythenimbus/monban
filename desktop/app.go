@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -218,11 +220,6 @@ func (a *App) UpdateSettings(settings CombinedSettings) error {
 		MkdirPath: monban.SecureConfigDir(),
 	})
 
-	// 2. PAM config update (if sudo gate changed)
-	//    On macOS Tahoe+, /etc/pam.d/ is TCC-protected and cannot be written
-	//    via osascript. The PAM file must be installed via Terminal with sudo.
-	//    We provide the command via GetSudoGateCommand() for the UI to display.
-
 	// Single privilege escalation for all writes.
 	if err := monban.BatchPrivilegedWrites(writes); err != nil {
 		return fmt.Errorf("applying secure settings: %w", err)
@@ -258,6 +255,57 @@ func (a *App) DetectDevice() (bool, error) {
 }
 
 // Register creates a new FIDO2 credential and initializes the config.
+// prepareAdditionalKey loads the existing secure config and master secret
+// for wrapping with a new key. The app must be unlocked.
+func (a *App) prepareAdditionalKey() (*monban.SecureConfig, []byte, []byte, error) {
+	if a.locked || a.masterSecret == nil {
+		return nil, nil, nil, fmt.Errorf("must be unlocked to add a new key")
+	}
+	sc, err := monban.LoadSecureConfig()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("loading secure config: %w", err)
+	}
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("decoding hmac salt: %w", err)
+	}
+	return sc, hmacSalt, a.masterSecret, nil
+}
+
+// prepareFirstRegistration generates a fresh master secret, hmac salt,
+// and secure config for initial setup.
+func (a *App) prepareFirstRegistration() (*monban.SecureConfig, []byte, []byte, error) {
+	hmacSalt, err := monban.GenerateHmacSalt()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	masterSecret, err := monban.GenerateMasterSecret()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sc := &monban.SecureConfig{
+		RpID:                "monban.local",
+		HmacSalt:            monban.EncodeB64(hmacSalt),
+		Credentials:         []monban.CredentialEntry{},
+		ForceAuthentication: true,
+	}
+
+	if !monban.ConfigExists() {
+		cfg := &monban.Config{
+			Vaults: []monban.VaultEntry{},
+			Settings: monban.Settings{
+				OpenOnStartup: true,
+			},
+		}
+		if err := monban.SaveConfig(cfg); err != nil {
+			return nil, nil, nil, fmt.Errorf("saving user config: %w", err)
+		}
+	}
+
+	return sc, hmacSalt, masterSecret, nil
+}
+
+// Register creates a new FIDO2 credential and wraps the master secret with it.
 // If this is the first credential, generates the master secret and hmac salt.
 // If credentials already exist, wraps the existing master secret with the new key.
 func (a *App) Register(pin string, label string) error {
@@ -275,48 +323,12 @@ func (a *App) Register(pin string, label string) error {
 	var masterSecret []byte
 
 	if monban.SecureConfigExists() {
-		// Adding to existing config — must be unlocked
-		if a.locked || a.masterSecret == nil {
-			return fmt.Errorf("must be unlocked to add a new key")
-		}
-		sc, err = monban.LoadSecureConfig()
-		if err != nil {
-			return fmt.Errorf("loading secure config: %w", err)
-		}
-		hmacSalt, err = monban.DecodeB64(sc.HmacSalt)
-		if err != nil {
-			return fmt.Errorf("decoding hmac salt: %w", err)
-		}
-		masterSecret = a.masterSecret
+		sc, hmacSalt, masterSecret, err = a.prepareAdditionalKey()
 	} else {
-		// First registration — generate everything
-		hmacSalt, err = monban.GenerateHmacSalt()
-		if err != nil {
-			return err
-		}
-		masterSecret, err = monban.GenerateMasterSecret()
-		if err != nil {
-			return err
-		}
-		sc = &monban.SecureConfig{
-			RpID:                "monban.local",
-			HmacSalt:            monban.EncodeB64(hmacSalt),
-			Credentials:         []monban.CredentialEntry{},
-			ForceAuthentication: true,
-		}
-
-		// Create user config if it doesn't exist
-		if !monban.ConfigExists() {
-			cfg := &monban.Config{
-				Vaults: []monban.VaultEntry{},
-				Settings: monban.Settings{
-					OpenOnStartup: true,
-				},
-			}
-			if err := monban.SaveConfig(cfg); err != nil {
-				return fmt.Errorf("saving user config: %w", err)
-			}
-		}
+		sc, hmacSalt, masterSecret, err = a.prepareFirstRegistration()
+	}
+	if err != nil {
+		return err
 	}
 
 	// Assert immediately to get hmac-secret for key wrapping
@@ -593,6 +605,19 @@ func (a *App) RemoveKey(credentialID string) error {
 
 	a.secureCfg = sc
 	return nil
+}
+
+// RevealSecureConfig opens the system file manager to the secure config directory.
+func (a *App) RevealSecureConfig() error {
+	dir := monban.SecureConfigDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", dir).Start()
+	case "linux":
+		return exec.Command("xdg-open", dir).Start()
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
 }
 
 // CheckDiskSpace returns disk space info for a folder.
