@@ -67,12 +67,14 @@ func main() {
 			return
 		}
 		win.Hide()
+		HideFromDock()
 		e.Cancel()
 	})
 
 	// Tray menu
 	trayMenu := wailsApp.NewMenu()
 	trayMenu.Add("Open Monban").OnClick(func(ctx *application.Context) {
+		ShowInDock()
 		win.Show()
 		win.Focus()
 	})
@@ -85,7 +87,9 @@ func main() {
 	app.SetWindow(win)
 
 	RegisterHardeningHooks(app)
-	installLaunchAgent()
+	if app.GetSettings().OpenOnStartup {
+		installLaunchAgent()
+	}
 	app.StartDeviceWatcher()
 
 	// Show window after app is running (hooks need the run loop active).
@@ -96,6 +100,7 @@ func main() {
 				app.EnterFullscreen()
 			}
 		}
+		ShowInDock()
 		win.Show()
 		win.Focus()
 	})

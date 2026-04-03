@@ -45,7 +45,10 @@ export function AdminPanel() {
     }
   };
 
-  const handleSetting = async <K extends keyof Settings>(key: K, value: Settings[K]) => {
+  const handleSetting = async <K extends keyof Settings>(
+    key: K,
+    value: Settings[K],
+  ) => {
     const updated = { ...settings, [key]: value };
     setSettings(updated);
     try {
@@ -60,7 +63,9 @@ export function AdminPanel() {
     <div ref={contentRef} className="gradient-bg flex flex-col p-6 pt-14">
       <div className="flex items-center justify-between mb-5">
         <h1 className="text-lg font-semibold text-text">Monban</h1>
-        <span className="text-accent text-xs font-medium px-2 py-1 rounded-full bg-accent/10">Unlocked</span>
+        <span className="text-accent text-xs font-medium px-2 py-1 rounded-full bg-accent/10">
+          Unlocked
+        </span>
       </div>
 
       {error && (
@@ -89,11 +94,7 @@ export function AdminPanel() {
             key: "keys",
             label: "Keys",
             content: (
-              <KeysTab
-                keys={keys}
-                onError={setError}
-                onRefresh={refresh}
-              />
+              <KeysTab keys={keys} onError={setError} onRefresh={refresh} />
             ),
           },
         ]}
@@ -142,7 +143,10 @@ function GeneralTab({
       await onRefresh();
     } catch (err: any) {
       // If the path is a file, try addFile instead
-      const msg = typeof err === "string" ? err : err?.message || err?.error || String(err);
+      const msg =
+        typeof err === "string"
+          ? err
+          : err?.message || err?.error || String(err);
       if (/not a directory/i.test(msg)) {
         try {
           await api.addFile(inputPath);
@@ -175,21 +179,37 @@ function GeneralTab({
         <div className="flex items-center justify-between px-4 py-3">
           <div>
             <div className="text-sm font-medium text-text">Open on startup</div>
-            <div className="text-xs text-text-secondary">Launch Monban when you log in</div>
+            <div className="text-xs text-text-secondary">
+              Launch Monban when you log in
+            </div>
           </div>
-          <Toggle checked={settings.open_on_startup} onChange={() => onToggle("open_on_startup")} label="Open on startup" />
+          <Toggle
+            checked={settings.open_on_startup}
+            onChange={() => onToggle("open_on_startup")}
+            label="Open on startup"
+          />
         </div>
         <div className="flex items-center justify-between px-4 py-3">
           <div>
-            <div className="text-sm font-medium text-text">Force authentication</div>
-            <div className="text-xs text-text-secondary">Fullscreen lock, can't be dismissed</div>
+            <div className="text-sm font-medium text-text">
+              Force authentication
+            </div>
+            <div className="text-xs text-text-secondary">
+              Fullscreen lock, can't be dismissed
+            </div>
           </div>
-          <Toggle checked={settings.force_authentication} onChange={() => onToggle("force_authentication")} label="Force authentication" />
+          <Toggle
+            checked={settings.force_authentication}
+            onChange={() => onToggle("force_authentication")}
+            label="Force authentication"
+          />
         </div>
         <div className="flex items-center justify-between px-4 py-3">
           <div>
             <div className="text-sm font-medium text-text">Sudo gate</div>
-            <div className="text-xs text-text-secondary">Require security key for sudo</div>
+            <div className="text-xs text-text-secondary">
+              Require security key for sudo
+            </div>
           </div>
           <Select
             label="Sudo gate"
@@ -204,11 +224,19 @@ function GeneralTab({
         </div>
         {sudoCmd && (
           <div className="px-4 py-3">
-            <div className="text-xs text-text-secondary mb-2">Run in Terminal to apply:</div>
+            <div className="text-xs text-text-secondary mb-2">
+              Run in Terminal to apply:
+            </div>
             <div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
-              <code className="text-xs font-mono text-white/90 break-all flex-1">{sudoCmd}</code>
+              <code className="text-xs font-mono text-white/90 break-all flex-1">
+                {sudoCmd}
+              </code>
               <button
-                onClick={() => { Clipboard.SetText(sudoCmd); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+                onClick={() => {
+                  Clipboard.SetText(sudoCmd);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
                 className="shrink-0 text-xs text-accent hover:text-accent/80 transition-colors cursor-pointer font-medium"
               >
                 {copied ? "Copied" : "Copy"}
@@ -219,16 +247,23 @@ function GeneralTab({
       </div>
 
       <div>
-        <h2 className="text-sm font-medium text-text-secondary mb-3">Protected Items</h2>
+        <h2 className="text-sm font-medium text-text-secondary mb-3">
+          Protected Items
+        </h2>
         {vaults.length === 0 ? (
           <div className="glass rounded-xl p-5 text-center">
             <p className="text-text-secondary text-sm">Nothing protected yet</p>
-            <p className="text-text-secondary text-xs mt-1">Add a folder or file to start encrypting</p>
+            <p className="text-text-secondary text-xs mt-1">
+              Add a folder or file to start encrypting
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
             {vaults.map((v) => (
-              <div key={v.path} className="glass rounded-xl px-4 py-3 flex items-center justify-between">
+              <div
+                key={v.path}
+                className="glass rounded-xl px-4 py-3 flex items-center justify-between"
+              >
                 <div>
                   <div className="text-sm font-medium text-text">{v.label}</div>
                   <div className="text-xs text-text-secondary">{v.path}</div>
@@ -309,8 +344,23 @@ function KeysTab({
 
   return (
     <div className="space-y-3 flex-1">
+      <div className="rounded-xl px-4 py-3 text-xs leading-relaxed bg-amber-500/10 text-amber-600 dark:text-amber-400">
+        <p>
+          Back up your security config to cloud storage. Without it, encrypted
+          files are unrecoverable.
+        </p>
+        <button
+          onClick={() => api.revealSecureConfig()}
+          className="mt-2 underline hover:opacity-80 transition-opacity cursor-pointer"
+        >
+          Show config file
+        </button>
+      </div>
       {keys.map((k) => (
-        <div key={k.credential_id} className="glass rounded-xl px-4 py-3 flex items-center justify-between">
+        <div
+          key={k.credential_id}
+          className="glass rounded-xl px-4 py-3 flex items-center justify-between"
+        >
           <span className="text-sm font-medium text-text">{k.label}</span>
           <button
             onClick={() => handleRemove(k.credential_id)}
@@ -348,7 +398,11 @@ function KeysTab({
               {adding ? "Registering..." : "Register Key"}
             </button>
             <button
-              onClick={() => { setShowAdd(false); setPin(""); setLabel(""); }}
+              onClick={() => {
+                setShowAdd(false);
+                setPin("");
+                setLabel("");
+              }}
               className="btn-secondary"
             >
               Cancel

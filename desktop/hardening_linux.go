@@ -38,6 +38,8 @@ func HasAccessibilityPermission() bool   { return false }
 func PromptAccessibilityPermission() bool { return false }
 func EnterKioskMode()                    {}
 func ExitKioskMode()                     {}
+func ShowInDock()                        {}
+func HideFromDock()                      {}
 
 
 // watchSleep listens for systemd-logind PrepareForSleep signals.

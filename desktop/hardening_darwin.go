@@ -69,6 +69,16 @@ static void exitKioskMode() {
     [NSApp setPresentationOptions:NSApplicationPresentationDefault];
 }
 
+// --- Dock visibility ---
+
+static void showInDock() {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+}
+
+static void hideFromDock() {
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+}
+
 // --- CGEventTap for keyboard shortcut blocking ---
 
 #define kVK_Tab   0x30
@@ -217,6 +227,20 @@ func ExitKioskMode() {
 	application.InvokeSync(func() {
 		C.stopEventTap()
 		C.exitKioskMode()
+	})
+}
+
+// ShowInDock switches to Regular activation policy so the app appears in the dock.
+func ShowInDock() {
+	application.InvokeSync(func() {
+		C.showInDock()
+	})
+}
+
+// HideFromDock switches to Accessory activation policy so the app disappears from the dock.
+func HideFromDock() {
+	application.InvokeSync(func() {
+		C.hideFromDock()
 	})
 }
 
