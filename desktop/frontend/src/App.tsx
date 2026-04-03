@@ -1,50 +1,63 @@
-import { useState, useEffect } from "react";
 import { Events } from "@wailsio/runtime";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { SetupScreen } from "./components/SetupScreen";
-import { LockScreen } from "./components/LockScreen";
-import { AdminPanel } from "./components/AdminPanel";
+import { AdminPanel } from "./screens/AdminPanel/AdminPanel";
+import { LockScreen } from "./screens/LockScreen/LockScreen";
+import { SetupScreen } from "./screens/SetupScreen/SetupScreen";
 
 type View = "loading" | "setup" | "lock" | "admin";
 
 function App() {
-  const [view, setView] = useState<View>("loading");
+	const [view, setView] = useState<View>("loading");
 
-  useEffect(() => {
-    checkState();
-    const off = Events.On("app:locked", () => setView("lock"));
-    return off;
-  }, []);
+	const checkState = useCallback(async () => {
+		try {
+			const status = await api.getStatus();
+			if (!status.registered) {
+				setView("setup");
+			} else if (status.locked) {
+				setView("lock");
+			} else {
+				setView("admin");
+			}
+		} catch {
+			setView("setup");
+		}
+	}, []);
 
-  const checkState = async () => {
-    try {
-      const status = await api.getStatus();
-      if (!status.registered) {
-        setView("setup");
-      } else if (status.locked) {
-        setView("lock");
-      } else {
-        setView("admin");
-      }
-    } catch {
-      setView("setup");
-    }
-  };
+	useEffect(() => {
+		checkState();
+		return Events.On("app:locked", () => setView("lock"));
+	}, [checkState]);
 
-  switch (view) {
-    case "loading":
-      return (
-        <div className="gradient-bg flex items-center justify-center min-h-screen text-text-secondary">
-          Loading...
-        </div>
-      );
-    case "setup":
-      return <SetupScreen onComplete={() => { api.exitFullscreen(); setView("admin"); }} />;
-    case "lock":
-      return <LockScreen onUnlock={() => { api.exitFullscreen(); setView("admin"); }} />;
-    case "admin":
-      return <AdminPanel />;
-  }
+	switch (view) {
+		case "loading":
+			return (
+				<div className="gradient-bg flex items-center justify-center min-h-screen text-text-secondary">
+					Loading...
+				</div>
+			);
+		case "setup":
+			return (
+				<SetupScreen
+					onComplete={() => {
+						api.exitFullscreen();
+						setView("admin");
+					}}
+				/>
+			);
+		case "lock":
+			return (
+				<LockScreen
+					onUnlock={() => {
+						api.exitFullscreen();
+						setView("admin");
+					}}
+				/>
+			);
+		case "admin":
+			return <AdminPanel />;
+	}
 }
 
 export default App;

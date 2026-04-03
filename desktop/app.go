@@ -643,6 +643,21 @@ func (a *App) CheckDiskSpace(path string) DiskSpaceInfo {
 }
 
 // AddFolder adds a folder to the protected list. Files are encrypted in place on lock.
+func (a *App) AddPath(path string) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("path not found: %w", err)
+	}
+	if info.IsDir() {
+		return a.AddFolder(absPath)
+	}
+	return a.AddFile(absPath)
+}
+
 func (a *App) AddFolder(path string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

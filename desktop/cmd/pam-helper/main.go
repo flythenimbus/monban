@@ -113,6 +113,44 @@ func install(mode string) error {
 	}
 	fmt.Printf("Configured %s (%s mode)\n", pamPath, mode)
 
+	// Strict mode also gates su to prevent root user activation bypass.
+	suPath := monban.PamSuPath()
+	if mode == "strict" {
+		suData, _ := os.ReadFile(suPath)
+		suLines := strings.Split(string(suData), "\n")
+
+		// Remove any existing monban line.
+		filtered := make([]string, 0, len(suLines))
+		for _, line := range suLines {
+			if !strings.Contains(line, monban.PamTag()) {
+				filtered = append(filtered, line)
+			}
+		}
+
+		// Insert monban line before the first auth entry.
+		suPamLine := fmt.Sprintf("auth required %s %s", pamModulePath, monban.PamTag())
+		result := make([]string, 0, len(filtered)+1)
+		inserted := false
+		for _, line := range filtered {
+			if !inserted && strings.HasPrefix(strings.TrimSpace(line), "auth") {
+				result = append(result, suPamLine)
+				inserted = true
+			}
+			result = append(result, line)
+		}
+		if !inserted {
+			result = append(result, suPamLine)
+		}
+
+		if err := os.WriteFile(suPath, []byte(strings.Join(result, "\n")), 0444); err != nil {
+			return fmt.Errorf("writing %s: %w", suPath, err)
+		}
+		fmt.Printf("Configured %s (strict mode)\n", suPath)
+	} else {
+		// Non-strict: ensure su is clean.
+		removePamTag(suPath)
+	}
+
 	return nil
 }
 
@@ -132,6 +170,9 @@ func uninstall() error {
 		return fmt.Errorf("must be run with sudo")
 	}
 
+	// Clean monban line from su PAM config (don't delete the file — it has other entries).
+	removePamTag(monban.PamSuPath())
+
 	for _, path := range []string{monban.PamSudoPath(), installPath, pamModulePath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
@@ -140,6 +181,24 @@ func uninstall() error {
 	}
 
 	return nil
+}
+
+// removePamTag removes the monban PAM line from a PAM config file, preserving
+// all other content. Unlike sudo_local which is monban-owned, su has existing
+// system entries that must be kept.
+func removePamTag(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !strings.Contains(line, monban.PamTag()) {
+			filtered = append(filtered, line)
+		}
+	}
+	_ = os.WriteFile(path, []byte(strings.Join(filtered, "\n")), 0444)
 }
 
 func authenticate() error {

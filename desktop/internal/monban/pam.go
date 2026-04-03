@@ -48,6 +48,11 @@ func PamSudoPath() string {
 	return pamSudoPath()
 }
 
+// PamSuPath returns the platform-specific path to the su PAM config.
+func PamSuPath() string {
+	return pamSuPath()
+}
+
 // IsPamInstalled checks if the monban PAM line is present in the sudo config.
 func IsPamInstalled() bool {
 	data, err := os.ReadFile(PamSudoPath())
@@ -57,9 +62,9 @@ func IsPamInstalled() bool {
 	return strings.Contains(string(data), pamTag)
 }
 
-// BuildPamContent reads the current sudo PAM config and returns the new content
-// with the monban line inserted (or updated for mode="off", removes the line).
-func BuildPamContent(mode string) (string, error) {
+// buildPamContentForPath reads a PAM config file and returns the new content
+// with the monban line inserted (or removed for mode="off").
+func buildPamContentForPath(pamPath, mode string) (string, error) {
 	helperPath, err := PamHelperPath()
 	if err != nil {
 		return "", err
@@ -69,7 +74,6 @@ func BuildPamContent(mode string) (string, error) {
 		return "", fmt.Errorf("PAM helper not found at %s: %w", helperPath, err)
 	}
 
-	pamPath := PamSudoPath()
 	data, _ := os.ReadFile(pamPath) // may not exist yet (e.g. sudo_local on macOS)
 
 	lines := strings.Split(string(data), "\n")
@@ -102,6 +106,12 @@ func BuildPamContent(mode string) (string, error) {
 	}
 
 	return strings.Join(result, "\n"), nil
+}
+
+// BuildPamContent reads the current sudo PAM config and returns the new content
+// with the monban line inserted (or updated for mode="off", removes the line).
+func BuildPamContent(mode string) (string, error) {
+	return buildPamContentForPath(PamSudoPath(), mode)
 }
 
 // InstallSudoGate inserts the monban PAM line into the sudo config, with

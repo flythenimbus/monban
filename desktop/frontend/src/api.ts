@@ -1,45 +1,53 @@
 import * as App from "../bindings/monban/app";
-import type { AppStatus, KeyInfo, DiskSpaceInfo, Settings } from "./types";
+import type { AppStatus, DiskSpaceInfo, KeyInfo, Settings } from "./types";
 
 export const api = {
-  isRegistered: (): Promise<boolean> => App.IsRegistered(),
+	isRegistered: (): Promise<boolean> => App.IsRegistered(),
 
-  detectDevice: (): Promise<boolean> => App.DetectDevice(),
+	detectDevice: (): Promise<boolean> => App.DetectDevice(),
 
-  register: (pin: string, label: string): Promise<void> =>
-    App.Register(pin, label),
+	register: (pin: string, label: string): Promise<void> =>
+		App.Register(pin, label),
 
-  unlock: (pin: string): Promise<void> => App.Unlock(pin),
+	unlock: (pin: string): Promise<void> => App.Unlock(pin),
 
-  lock: (): Promise<void> => App.Lock(),
+	lock: (): Promise<void> => App.Lock(),
 
-  getStatus: (): Promise<AppStatus> => App.GetStatus() as any,
+	getStatus: (): Promise<AppStatus> =>
+		App.GetStatus() as unknown as Promise<AppStatus>,
 
-  listKeys: (): Promise<KeyInfo[]> => App.ListKeys() as any,
+	listKeys: (): Promise<KeyInfo[]> =>
+		App.ListKeys() as unknown as Promise<KeyInfo[]>,
 
-  removeKey: (credentialId: string): Promise<void> =>
-    App.RemoveKey(credentialId),
+	removeKey: (credentialId: string): Promise<void> =>
+		App.RemoveKey(credentialId),
 
-  checkDiskSpace: (path: string): Promise<DiskSpaceInfo> =>
-    App.CheckDiskSpace(path) as any,
+	checkDiskSpace: (path: string): Promise<DiskSpaceInfo> =>
+		App.CheckDiskSpace(path) as unknown as Promise<DiskSpaceInfo>,
 
-  addFolder: (path: string): Promise<void> => App.AddFolder(path),
+	addPath: (path: string): Promise<void> => App.AddPath(path),
 
-  addFile: (path: string): Promise<void> => App.AddFile(path),
+	addFolder: (path: string): Promise<void> => App.AddFolder(path),
 
-  removeFolder: (vaultPath: string): Promise<void> =>
-    App.RemoveFolder(vaultPath),
+	addFile: (path: string): Promise<void> => App.AddFile(path),
 
-  exitFullscreen: (): Promise<void> => App.ExitFullscreen(),
+	removeFolder: (vaultPath: string): Promise<void> =>
+		App.RemoveFolder(vaultPath),
 
-  enterFullscreen: (): Promise<void> => App.EnterFullscreen(),
+	exitFullscreen: (): Promise<void> => App.ExitFullscreen(),
 
-  getSettings: (): Promise<Settings> => App.GetSettings() as any,
+	enterFullscreen: (): Promise<void> => App.EnterFullscreen(),
 
-  updateSettings: (settings: Settings): Promise<void> =>
-    App.UpdateSettings(settings as any),
+	getSettings: (): Promise<Settings> =>
+		App.GetSettings() as unknown as Promise<Settings>,
 
-  getSudoGateCommand: (mode: string): Promise<string> => App.GetSudoGateCommand(mode) as any,
+	updateSettings: (settings: Settings): Promise<void> =>
+		App.UpdateSettings(
+			settings as unknown as Parameters<typeof App.UpdateSettings>[0],
+		),
 
-  revealSecureConfig: (): Promise<void> => App.RevealSecureConfig(),
+	getSudoGateCommand: (mode: string): Promise<string> =>
+		App.GetSudoGateCommand(mode),
+
+	revealSecureConfig: (): Promise<void> => App.RevealSecureConfig(),
 };

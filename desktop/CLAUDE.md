@@ -184,8 +184,8 @@ Monban can gate `sudo` behind YubiKey FIDO2 authentication via `pam_exec.so`.
 
 Modes:
 - **off** — no PAM integration
-- **default** — `auth sufficient` — YubiKey success skips password, failure falls through
-- **strict** — `auth required` — YubiKey must succeed, no password fallback
+- **default** — `auth sufficient` on sudo only — YubiKey success skips password, failure falls through
+- **strict** — `auth required` on both sudo and su — YubiKey must succeed, no password fallback. Also gates `/etc/pam.d/su` to prevent root user activation bypass.
 
 Components:
 - `cmd/pam-helper/` — standalone binary invoked by PAM, reads secure config,
