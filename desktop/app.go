@@ -472,20 +472,8 @@ func (a *App) Unlock(pin string) error {
 
 	// Unlock all vaults
 	for _, v := range cfg.Vaults {
-		if v.IsFile() {
-			if !monban.IsFileLocked(v.Path) {
-				continue
-			}
-			if err := monban.UnlockFile(encKey, v.Path); err != nil {
-				return fmt.Errorf("unlocking file %s: %w", v.Label, err)
-			}
-		} else {
-			if !monban.IsLocked(v.Path) {
-				continue
-			}
-			if err := monban.UnlockFolder(encKey, v.Path); err != nil {
-				return fmt.Errorf("unlocking vault %s: %w", v.Label, err)
-			}
+		if err := monban.UnlockVaultEntry(encKey, v); err != nil {
+			return err
 		}
 	}
 
@@ -505,20 +493,8 @@ func (a *App) Lock() error {
 
 	if a.config != nil && a.encKey != nil {
 		for _, v := range a.config.Vaults {
-			if v.IsFile() {
-				if monban.IsFileLocked(v.Path) {
-					continue
-				}
-				if err := monban.LockFile(a.encKey, v.Path); err != nil {
-					return fmt.Errorf("locking file %s: %w", v.Label, err)
-				}
-			} else {
-				if monban.IsLocked(v.Path) {
-					continue
-				}
-				if err := monban.LockFolder(a.encKey, v.Path); err != nil {
-					return fmt.Errorf("locking vault %s: %w", v.Label, err)
-				}
+			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+				return err
 			}
 		}
 	}
@@ -660,10 +636,8 @@ func (a *App) AddFolder(path string) error {
 		return fmt.Errorf("resolving path: %w", err)
 	}
 
-	for _, v := range cfg.Vaults {
-		if v.Path == absPath {
-			return fmt.Errorf("already protected: %s", absPath)
-		}
+	if monban.FindVaultIndex(cfg.Vaults, absPath) != -1 {
+		return fmt.Errorf("already protected: %s", absPath)
 	}
 
 	// Verify folder exists
@@ -718,32 +692,14 @@ func (a *App) RemoveFolder(folderPath string) error {
 		return err
 	}
 
-	idx := -1
-	for i, v := range cfg.Vaults {
-		if v.Path == folderPath {
-			idx = i
-			break
-		}
-	}
+	idx := monban.FindVaultIndex(cfg.Vaults, folderPath)
 	if idx == -1 {
 		return fmt.Errorf("folder not found: %s", folderPath)
 	}
 
-	entry := cfg.Vaults[idx]
-
 	// Ensure files are decrypted
-	if entry.IsFile() {
-		if monban.IsFileLocked(folderPath) {
-			if err := monban.UnlockFile(a.encKey, folderPath); err != nil {
-				return fmt.Errorf("unlocking file for removal: %w", err)
-			}
-		}
-	} else {
-		if monban.IsLocked(folderPath) {
-			if err := monban.UnlockFolder(a.encKey, folderPath); err != nil {
-				return fmt.Errorf("unlocking for removal: %w", err)
-			}
-		}
+	if err := monban.UnlockVaultEntry(a.encKey, cfg.Vaults[idx]); err != nil {
+		return err
 	}
 
 	cfg.Vaults = append(cfg.Vaults[:idx], cfg.Vaults[idx+1:]...)
@@ -774,10 +730,8 @@ func (a *App) AddFile(path string) error {
 		return fmt.Errorf("resolving path: %w", err)
 	}
 
-	for _, v := range cfg.Vaults {
-		if v.Path == absPath {
-			return fmt.Errorf("already protected: %s", absPath)
-		}
+	if monban.FindVaultIndex(cfg.Vaults, absPath) != -1 {
+		return fmt.Errorf("already protected: %s", absPath)
 	}
 
 	info, err := os.Stat(absPath)
