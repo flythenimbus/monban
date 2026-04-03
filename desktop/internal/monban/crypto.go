@@ -1,8 +1,6 @@
 package monban
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -34,14 +32,9 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 	}
 	defer dst.Close()
 
-	block, err := aes.NewCipher(key)
+	gcm, err := newGCM(key)
 	if err != nil {
-		return fmt.Errorf("creating cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("creating GCM: %w", err)
+		return err
 	}
 
 	// Generate file nonce
@@ -100,14 +93,9 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 	}
 	defer dst.Close()
 
-	block, err := aes.NewCipher(key)
+	gcm, err := newGCM(key)
 	if err != nil {
-		return fmt.Errorf("creating cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return fmt.Errorf("creating GCM: %w", err)
+		return err
 	}
 
 	// Read header

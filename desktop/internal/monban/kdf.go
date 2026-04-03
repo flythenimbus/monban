@@ -1,8 +1,6 @@
 package monban
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
@@ -46,14 +44,9 @@ func GenerateMasterSecret() ([]byte, error) {
 // WrapKey encrypts plaintext with AES-256-GCM using the given wrapping key.
 // Returns nonce (12 bytes) || ciphertext+tag.
 func WrapKey(wrappingKey, plaintext []byte) ([]byte, error) {
-	block, err := aes.NewCipher(wrappingKey)
+	gcm, err := newGCM(wrappingKey)
 	if err != nil {
-		return nil, fmt.Errorf("creating cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("creating GCM: %w", err)
+		return nil, err
 	}
 
 	nonce := make([]byte, gcm.NonceSize())
@@ -74,14 +67,9 @@ func WrapKey(wrappingKey, plaintext []byte) ([]byte, error) {
 // Returns the plaintext master secret, or error if authentication fails
 // (wrong key or tampered data).
 func UnwrapKey(wrappingKey, data []byte) ([]byte, error) {
-	block, err := aes.NewCipher(wrappingKey)
+	gcm, err := newGCM(wrappingKey)
 	if err != nil {
-		return nil, fmt.Errorf("creating cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("creating GCM: %w", err)
+		return nil, err
 	}
 
 	nonceSize := gcm.NonceSize()
