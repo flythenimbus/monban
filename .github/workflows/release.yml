@@ -7,6 +7,9 @@ on:
 permissions:
   contents: write
 
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
 jobs:
   build-darwin:
     runs-on: macos-14
@@ -42,8 +45,6 @@ jobs:
           version: "~> v2"
           args: build --clean -f .goreleaser-darwin.yml
           workdir: desktop
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Package .app bundle
         working-directory: desktop
@@ -98,8 +99,6 @@ jobs:
           version: "~> v2"
           args: release --skip=publish --clean -f .goreleaser-linux-amd64.yml
           workdir: desktop
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -144,8 +143,6 @@ jobs:
           version: "~> v2"
           args: release --skip=publish --clean -f .goreleaser-linux-arm64.yml
           workdir: desktop
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -176,7 +173,7 @@ jobs:
 
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "Monban ${{ github.ref_name }}" \
