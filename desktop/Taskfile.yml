@@ -63,6 +63,31 @@ tasks:
     cmds:
       - task: common:run:server
 
+  release:test:
+    summary: Pushes a release candidate tag to test the release workflow
+    vars:
+      VERSION: '{{.VERSION | default "0.0.1-rc1"}}'
+    cmds:
+      - git tag v{{.VERSION}}
+      - git push origin v{{.VERSION}}
+
+  release:test:cleanup:
+    summary: Deletes a release candidate tag and its GitHub release
+    vars:
+      VERSION: '{{.VERSION | default "0.0.1-rc1"}}'
+    cmds:
+      - gh release delete v{{.VERSION}} --yes --cleanup-tag
+      - git tag -d v{{.VERSION}}
+
+  release:
+    summary: Creates a new release by tagging and pushing
+    preconditions:
+      - sh: '[ -n "{{.VERSION}}" ]'
+        msg: "VERSION is required. Usage: task release VERSION=1.0.0"
+    cmds:
+      - git tag v{{.VERSION}}
+      - git push origin v{{.VERSION}}
+
   build:docker:
     summary: Builds a Docker image for server mode deployment
     cmds:

@@ -1,0 +1,32 @@
+version: 2
+project_name: monban
+
+before:
+  hooks:
+    - task common:go:mod:tidy
+    - task common:build:frontend
+    - task common:generate:icons
+
+builds:
+  - binary: Monban
+    targets:
+      - darwin_arm64
+      - darwin_amd64
+    flags:
+      - -tags=production
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -w -s
+    env:
+      - CGO_ENABLED=1
+      - MACOSX_DEPLOYMENT_TARGET=10.15
+      - >-
+        {{- if eq .Arch "arm64"}}CGO_CFLAGS=-I/opt/homebrew/include -mmacosx-version-min=10.15{{- end }}
+        {{- if eq .Arch "amd64"}}CGO_CFLAGS=-I/usr/local/include -mmacosx-version-min=10.15{{- end }}
+      - >-
+        {{- if eq .Arch "arm64"}}CGO_LDFLAGS=-L/opt/homebrew/lib -lfido2 -mmacosx-version-min=10.15{{- end }}
+        {{- if eq .Arch "amd64"}}CGO_LDFLAGS=-L/usr/local/lib -lfido2 -mmacosx-version-min=10.15{{- end }}
+
+universal_binaries:
+  - replace: true

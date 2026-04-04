@@ -1,0 +1,61 @@
+version: 2
+project_name: monban
+
+before:
+  hooks:
+    - task common:go:mod:tidy
+    - task common:build:frontend
+    - task linux:generate:dotdesktop
+
+builds:
+  - binary: monban
+    targets:
+      - linux_arm64
+    flags:
+      - -tags=production
+      - -trimpath
+      - -buildvcs=false
+    ldflags:
+      - -w -s
+    env:
+      - CGO_ENABLED=1
+      - CGO_LDFLAGS=-lfido2
+
+archives:
+  - format: tar.gz
+    name_template: "monban_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+nfpms:
+  - package_name: monban
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: Monban
+    description: Security key-based folder encryption
+    license: MIT
+    bindir: /usr/local/bin
+    formats:
+      - deb
+      - rpm
+    dependencies:
+      - libgtk-3-0
+      - libwebkit2gtk-4.1-0
+      - libfido2-1
+    overrides:
+      rpm:
+        dependencies:
+          - gtk3
+          - webkit2gtk4.1
+          - libfido2
+    contents:
+      - src: build/appicon.png
+        dst: /usr/share/icons/hicolor/128x128/apps/monban.png
+      - src: build/linux/monban.desktop
+        dst: /usr/share/applications/monban.desktop
+
+checksum:
+  name_template: "checksums_linux_arm64.txt"
+
+changelog:
+  disable: true
+
+release:
+  disable: true
