@@ -1,41 +1,41 @@
 {
-  "lsp": {
-    "gopls": {
-      "initialization_options": {
-        "build.env": {
-          "CGO_ENABLED": "1",
-          "CGO_CFLAGS": "-I/opt/homebrew/include",
-          "CGO_LDFLAGS": "-L/opt/homebrew/lib -lfido2",
-        },
-      },
-    },
-    "vtsls": {
-      "settings": {
-        "typescript": {
-          "updateImportsOnFileMove": {
-            "enabled": "always",
-          },
-        },
-        "javascript": {
-          "updateImportsOnFileMove": {
-            "enabled": "always",
-          },
-        },
-      },
-      "enable_lsp_tasks": true,
-    },
-    "biome": {
-      "settings": {
-        "config_path": "./desktop/frontend/biome.json",
-        "require_config_file": true,
-      },
-    },
-  },
-  "languages": {
-    "TSX": { "formatter": { "language_server": { "name": "biome" } } },
-    "TypeScript": { "formatter": { "language_server": { "name": "biome" } } },
-    "CSS": { "formatter": { "language_server": { "name": "biome" } } },
-    "JSON": { "formatter": { "language_server": { "name": "biome" } } },
-    "JSONC": { "formatter": { "language_server": { "name": "biome" } } },
-  },
+	"lsp": {
+		"gopls": {
+			"initialization_options": {
+				"build.env": {
+					"CGO_ENABLED": "1",
+					"CGO_CFLAGS": "-I/opt/homebrew/include",
+					"CGO_LDFLAGS": "-L/opt/homebrew/lib -lfido2"
+				}
+			}
+		},
+		"vtsls": {
+			"settings": {
+				"typescript": {
+					"updateImportsOnFileMove": {
+						"enabled": "always"
+					}
+				},
+				"javascript": {
+					"updateImportsOnFileMove": {
+						"enabled": "always"
+					}
+				}
+			},
+			"enable_lsp_tasks": true
+		},
+		"biome": {
+			"settings": {
+				"config_path": "<path>/biome.json",
+				"require_config_file": true
+			}
+		}
+	},
+	"languages": {
+		"TSX": { "formatter": { "language_server": { "name": "biome" } } },
+		"TypeScript": { "formatter": { "language_server": { "name": "biome" } } },
+		"CSS": { "formatter": { "language_server": { "name": "biome" } } },
+		"JSON": { "formatter": { "language_server": { "name": "biome" } } },
+		"JSONC": { "formatter": { "language_server": { "name": "biome" } } }
+	}
 }
