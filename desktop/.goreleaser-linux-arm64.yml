@@ -48,7 +48,7 @@ nfpms:
     contents:
       - src: build/appicon.png
         dst: /usr/share/icons/hicolor/128x128/apps/monban.png
-      - src: build/linux/monban.desktop
+      - src: build/linux/Monban.desktop
         dst: /usr/share/applications/monban.desktop
 
 checksum:

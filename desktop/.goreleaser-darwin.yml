@@ -13,7 +13,7 @@ builds:
       - darwin_arm64
       - darwin_amd64
     flags:
-      - -tags=production
+      - -tags=production,dynamic
       - -trimpath
       - -buildvcs=false
     ldflags:
