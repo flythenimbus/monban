@@ -1,0 +1,5 @@
+{
+	"name": "monban",
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"compatibility_date": "2025-05-21"
+}
