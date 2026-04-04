@@ -34,7 +34,12 @@ jobs:
       - name: Install amd64 libfido2
         run: |
           arch -x86_64 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          arch -x86_64 /usr/local/bin/brew install libfido2
+          arch -x86_64 /usr/local/bin/brew install libfido2 openssl@3
+
+          # go-libfido2 hardcodes openssl@1.1 paths in its static CGO directives
+          # (fido2_static_amd64.go has no build constraint so it's always compiled).
+          # Symlink openssl@3 to the expected openssl@1.1 location.
+          sudo ln -s /usr/local/opt/openssl@3 /usr/local/opt/openssl@1.1
 
       - name: Install wails3
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
