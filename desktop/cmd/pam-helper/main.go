@@ -222,11 +222,11 @@ func authenticate() error {
 	if err != nil {
 		return fmt.Errorf("opening /dev/tty: %w", err)
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 
-	fmt.Fprint(tty, "monban: security key PIN: ")
+	_, _ = fmt.Fprint(tty, "monban: security key PIN: ")
 	pinBytes, err := term.ReadPassword(int(tty.Fd()))
-	fmt.Fprintln(tty) // newline after hidden input
+	_, _ = fmt.Fprintln(tty) // newline after hidden input
 	if err != nil {
 		return fmt.Errorf("reading PIN: %w", err)
 	}
@@ -243,7 +243,7 @@ func authenticate() error {
 	}
 
 	// Perform FIDO2 assertion — requires touch + PIN.
-	fmt.Fprint(tty, "monban: touch your security key...\n")
+	_, _ = fmt.Fprint(tty, "monban: touch your security key...\n")
 	assertion, err := monban.Assert(pin, credIDs, hmacSalt)
 	if err != nil {
 		return fmt.Errorf("FIDO2 assertion failed: %w", err)
@@ -275,7 +275,7 @@ func authenticate() error {
 		return fmt.Errorf("monban: no matching registered key")
 	}
 
-	fmt.Fprint(tty, "monban: authenticated\n")
+	_, _ = fmt.Fprint(tty, "monban: authenticated\n")
 	return nil
 }
 

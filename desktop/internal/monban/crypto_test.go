@@ -17,7 +17,7 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	enc := filepath.Join(dir, "plain.txt.enc")
 	dec := filepath.Join(dir, "plain.dec.txt")
 
-	os.WriteFile(src, plaintext, 0600)
+	_ = os.WriteFile(src, plaintext, 0600)
 
 	if err := EncryptFile(key, src, enc); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestEncryptDecryptLargeFile(t *testing.T) {
 	enc := filepath.Join(dir, "large.bin.enc")
 	dec := filepath.Join(dir, "large.dec.bin")
 
-	os.WriteFile(src, plaintext, 0600)
+	_ = os.WriteFile(src, plaintext, 0600)
 
 	if err := EncryptFile(key, src, enc); err != nil {
 		t.Fatal(err)
@@ -74,7 +74,7 @@ func TestEncryptDecryptEmptyFile(t *testing.T) {
 	enc := filepath.Join(dir, "empty.txt.enc")
 	dec := filepath.Join(dir, "empty.dec.txt")
 
-	os.WriteFile(src, []byte{}, 0600)
+	_ = os.WriteFile(src, []byte{}, 0600)
 
 	if err := EncryptFile(key, src, enc); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestEncryptDecryptExactChunkSize(t *testing.T) {
 	enc := filepath.Join(dir, "exact.bin.enc")
 	dec := filepath.Join(dir, "exact.dec.bin")
 
-	os.WriteFile(src, plaintext, 0600)
+	_ = os.WriteFile(src, plaintext, 0600)
 
 	if err := EncryptFile(key, src, enc); err != nil {
 		t.Fatal(err)
@@ -124,13 +124,13 @@ func TestDecryptCorruptedFile(t *testing.T) {
 	enc := filepath.Join(dir, "plain.txt.enc")
 	dec := filepath.Join(dir, "plain.dec.txt")
 
-	os.WriteFile(src, plaintext, 0600)
-	EncryptFile(key, src, enc)
+	_ = os.WriteFile(src, plaintext, 0600)
+	_ = EncryptFile(key, src, enc)
 
 	// Corrupt the encrypted file
 	data, _ := os.ReadFile(enc)
 	data[len(data)-1] ^= 0xFF
-	os.WriteFile(enc, data, 0600)
+	_ = os.WriteFile(enc, data, 0600)
 
 	err := DecryptFile(key, enc, dec)
 	if err == nil {
@@ -148,8 +148,8 @@ func TestDecryptWrongKey(t *testing.T) {
 	enc := filepath.Join(dir, "plain.txt.enc")
 	dec := filepath.Join(dir, "plain.dec.txt")
 
-	os.WriteFile(src, plaintext, 0600)
-	EncryptFile(key1, src, enc)
+	_ = os.WriteFile(src, plaintext, 0600)
+	_ = EncryptFile(key1, src, enc)
 
 	err := DecryptFile(key2, enc, dec)
 	if err == nil {
@@ -169,10 +169,10 @@ func TestEncryptDecryptMultipleChunks(t *testing.T) {
 	enc := filepath.Join(dir, "multi.bin.enc")
 	dec := filepath.Join(dir, "multi.dec.bin")
 
-	os.WriteFile(src, plaintext, 0600)
+	_ = os.WriteFile(src, plaintext, 0600)
 
-	EncryptFile(key, src, enc)
-	DecryptFile(key, enc, dec)
+	_ = EncryptFile(key, src, enc)
+	_ = DecryptFile(key, enc, dec)
 
 	result, _ := os.ReadFile(dec)
 	if !bytes.Equal(plaintext, result) {
@@ -188,8 +188,8 @@ func TestEncryptedFileLargerThanPlaintext(t *testing.T) {
 	src := filepath.Join(dir, "small.txt")
 	enc := filepath.Join(dir, "small.txt.enc")
 
-	os.WriteFile(src, plaintext, 0600)
-	EncryptFile(key, src, enc)
+	_ = os.WriteFile(src, plaintext, 0600)
+	_ = EncryptFile(key, src, enc)
 
 	srcInfo, _ := os.Stat(src)
 	encInfo, _ := os.Stat(enc)
@@ -207,7 +207,7 @@ func TestDecryptTruncatedFile(t *testing.T) {
 
 	// File too short to even have a header
 	short := filepath.Join(dir, "short.enc")
-	os.WriteFile(short, []byte{1, 2, 3}, 0600)
+	_ = os.WriteFile(short, []byte{1, 2, 3}, 0600)
 
 	err := DecryptFile(key, short, dec)
 	if err == nil {

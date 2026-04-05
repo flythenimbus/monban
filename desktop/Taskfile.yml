@@ -23,6 +23,22 @@ tasks:
     cmds:
       - go test ./internal/monban/ -v
 
+  lint:
+    summary: Runs all linters
+    cmds:
+      - golangci-lint run ./...
+      - cd frontend && bun run lint
+
+  lint:go:
+    summary: Runs Go linter
+    cmds:
+      - golangci-lint run ./...
+
+  lint:frontend:
+    summary: Runs frontend linter
+    cmds:
+      - cd frontend && bun run lint
+
   bindings:
     summary: Generates Wails frontend bindings from Go services
     cmds:

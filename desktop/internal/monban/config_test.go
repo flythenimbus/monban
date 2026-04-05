@@ -86,8 +86,8 @@ func TestLoadConfigBadPermissions(t *testing.T) {
 		ConfigPath = origConfigPath
 	}()
 
-	os.MkdirAll(configDir, 0700)
-	os.WriteFile(configFile, []byte(`{}`), 0644) // too open
+	_ = os.MkdirAll(configDir, 0700)
+	_ = os.WriteFile(configFile, []byte(`{}`), 0644) // too open
 
 	_, err := LoadConfig()
 	if err == nil {
@@ -103,7 +103,7 @@ func TestConfigExistsTrue(t *testing.T) {
 	ConfigPath = func() string { return configFile }
 	defer func() { ConfigPath = origConfigPath }()
 
-	os.WriteFile(configFile, []byte(`{}`), 0600)
+	_ = os.WriteFile(configFile, []byte(`{}`), 0600)
 
 	if !ConfigExists() {
 		t.Error("ConfigExists should return true")

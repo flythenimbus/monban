@@ -46,8 +46,8 @@ func TestVerifyAssertionValid(t *testing.T) {
 	sig := signAuthData(t, key, authData, cdh[:])
 
 	err := VerifyAssertion(
-		key.PublicKey.X.Bytes(),
-		key.PublicKey.Y.Bytes(),
+		key.X.Bytes(),
+		key.Y.Bytes(),
 		cdh[:],
 		authData, // raw, not CBOR-wrapped
 		sig,
@@ -67,8 +67,8 @@ func TestVerifyAssertionBadSignature(t *testing.T) {
 	sig[len(sig)-1] ^= 0xFF
 
 	err := VerifyAssertion(
-		key.PublicKey.X.Bytes(),
-		key.PublicKey.Y.Bytes(),
+		key.X.Bytes(),
+		key.Y.Bytes(),
 		cdh[:],
 		authData,
 		sig,
@@ -87,8 +87,8 @@ func TestVerifyAssertionMissingUP(t *testing.T) {
 	sig := signAuthData(t, key, authData, cdh[:])
 
 	err := VerifyAssertion(
-		key.PublicKey.X.Bytes(),
-		key.PublicKey.Y.Bytes(),
+		key.X.Bytes(),
+		key.Y.Bytes(),
 		cdh[:],
 		authData,
 		sig,
@@ -107,8 +107,8 @@ func TestVerifyAssertionMissingUV(t *testing.T) {
 	sig := signAuthData(t, key, authData, cdh[:])
 
 	err := VerifyAssertion(
-		key.PublicKey.X.Bytes(),
-		key.PublicKey.Y.Bytes(),
+		key.X.Bytes(),
+		key.Y.Bytes(),
 		cdh[:],
 		authData,
 		sig,

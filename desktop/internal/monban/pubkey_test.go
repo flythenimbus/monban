@@ -15,7 +15,7 @@ func generateTestP256Key(t *testing.T) (x, y []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return key.PublicKey.X.Bytes(), key.PublicKey.Y.Bytes()
+	return key.X.Bytes(), key.Y.Bytes()
 }
 
 func TestParseRawXY(t *testing.T) {

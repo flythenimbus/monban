@@ -43,10 +43,10 @@ func VerifyAssertion(pubKeyX, pubKeyY []byte, clientDataHash []byte, authDataCBO
 
 	flags := authData[32]
 	if flags&0x01 == 0 {
-		return fmt.Errorf("User Present (UP) flag not set")
+		return fmt.Errorf("user present (UP) flag not set")
 	}
 	if flags&0x04 == 0 {
-		return fmt.Errorf("User Verified (UV) flag not set")
+		return fmt.Errorf("user verified (UV) flag not set")
 	}
 
 	pubKey := ecdsa.PublicKey{
