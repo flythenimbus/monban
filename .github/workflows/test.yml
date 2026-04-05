@@ -33,10 +33,18 @@ jobs:
         with:
           go-version-file: desktop/go.mod
 
+      - uses: oven-sh/setup-bun@v2
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build frontend
+        working-directory: desktop/frontend
+        run: |
+          bun install
+          bun run build
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
