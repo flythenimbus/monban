@@ -35,15 +35,15 @@ func writeTempFile(content string) (string, error) {
 	}
 	path := f.Name()
 	if _, err := f.WriteString(content); err != nil {
-		f.Close()
-		os.Remove(path)
+		_ = f.Close()
+		_ = os.Remove(path)
 		return "", fmt.Errorf("writing temp file: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(path)
+		_ = os.Remove(path)
 		return "", fmt.Errorf("closing temp file: %w", err)
 	}
 	// Make readable by root when it copies.
-	os.Chmod(path, 0644)
+	_ = os.Chmod(path, 0644)
 	return path, nil
 }

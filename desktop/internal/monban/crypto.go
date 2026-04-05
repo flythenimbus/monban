@@ -24,13 +24,13 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	gcm, err := newGCM(key)
 	if err != nil {
@@ -85,13 +85,13 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 	if err != nil {
 		return fmt.Errorf("opening source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	gcm, err := newGCM(key)
 	if err != nil {

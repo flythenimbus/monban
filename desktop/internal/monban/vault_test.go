@@ -16,11 +16,11 @@ func createTestFolder(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "testfolder")
-	os.MkdirAll(folder, 0700)
-	os.MkdirAll(filepath.Join(folder, "sub"), 0700)
-	os.WriteFile(filepath.Join(folder, "file1.txt"), []byte("hello"), 0600)
-	os.WriteFile(filepath.Join(folder, "file2.txt"), []byte("world"), 0600)
-	os.WriteFile(filepath.Join(folder, "sub", "nested.txt"), []byte("nested content"), 0600)
+	_ = os.MkdirAll(folder, 0700)
+	_ = os.MkdirAll(filepath.Join(folder, "sub"), 0700)
+	_ = os.WriteFile(filepath.Join(folder, "file1.txt"), []byte("hello"), 0600)
+	_ = os.WriteFile(filepath.Join(folder, "file2.txt"), []byte("world"), 0600)
+	_ = os.WriteFile(filepath.Join(folder, "sub", "nested.txt"), []byte("nested content"), 0600)
 	return folder
 }
 
@@ -94,11 +94,11 @@ func TestLockIncrementalUnchanged(t *testing.T) {
 	key := makeTestKey()
 
 	// First lock
-	LockFolder(key, folder)
-	UnlockFolder(key, folder)
+	_ = LockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	// Add a new file
-	os.WriteFile(filepath.Join(folder, "new.txt"), []byte("new file"), 0600)
+	_ = os.WriteFile(filepath.Join(folder, "new.txt"), []byte("new file"), 0600)
 
 	// Second lock — should encrypt new file, reuse existing .enc for unchanged
 	if err := LockFolder(key, folder); err != nil {
@@ -106,7 +106,7 @@ func TestLockIncrementalUnchanged(t *testing.T) {
 	}
 
 	// Unlock and verify all files present
-	UnlockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	newContent, err := os.ReadFile(filepath.Join(folder, "new.txt"))
 	if err != nil {
@@ -128,12 +128,12 @@ func TestLockIncrementalModified(t *testing.T) {
 	key := makeTestKey()
 
 	// First lock
-	LockFolder(key, folder)
-	UnlockFolder(key, folder)
+	_ = LockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	// Modify a file (change content and ensure mod time differs)
 	time.Sleep(10 * time.Millisecond)
-	os.WriteFile(filepath.Join(folder, "file1.txt"), []byte("modified!"), 0600)
+	_ = os.WriteFile(filepath.Join(folder, "file1.txt"), []byte("modified!"), 0600)
 
 	// Re-lock
 	if err := LockFolder(key, folder); err != nil {
@@ -141,7 +141,7 @@ func TestLockIncrementalModified(t *testing.T) {
 	}
 
 	// Unlock and verify modification persisted
-	UnlockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	data, _ := os.ReadFile(filepath.Join(folder, "file1.txt"))
 	if string(data) != "modified!" {
@@ -154,11 +154,11 @@ func TestLockDeletedFile(t *testing.T) {
 	key := makeTestKey()
 
 	// First lock
-	LockFolder(key, folder)
-	UnlockFolder(key, folder)
+	_ = LockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	// Delete a file
-	os.Remove(filepath.Join(folder, "file2.txt"))
+	_ = os.Remove(filepath.Join(folder, "file2.txt"))
 
 	// Re-lock — stale .enc should be cleaned up
 	if err := LockFolder(key, folder); err != nil {
@@ -166,7 +166,7 @@ func TestLockDeletedFile(t *testing.T) {
 	}
 
 	// Unlock — file2.txt should not exist
-	UnlockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	if _, err := os.Stat(filepath.Join(folder, "file2.txt")); !os.IsNotExist(err) {
 		t.Error("deleted file should not reappear after unlock")
@@ -183,8 +183,8 @@ func TestRecoverFromJournalEncrypting(t *testing.T) {
 	folder := createTestFolder(t)
 
 	// Simulate crash during encrypting phase: journal exists, partial .monban-data
-	os.MkdirAll(filepath.Join(folder, ".monban-data"), 0700)
-	os.WriteFile(filepath.Join(folder, ".monban-data", "partial.enc"), []byte("junk"), 0600)
+	_ = os.MkdirAll(filepath.Join(folder, ".monban-data"), 0700)
+	_ = os.WriteFile(filepath.Join(folder, ".monban-data", "partial.enc"), []byte("junk"), 0600)
 
 	journal := &JournalState{
 		Operation: "lock",
@@ -192,7 +192,7 @@ func TestRecoverFromJournalEncrypting(t *testing.T) {
 		State:     "encrypting",
 		Timestamp: time.Now(),
 	}
-	writeJournal(folder, journal)
+	_ = writeJournal(folder, journal)
 
 	// Recovery should clean up .monban-data and journal
 	err := RecoverFromJournal(folder)
@@ -247,7 +247,7 @@ func TestRecoverFromJournalRemovingOriginals(t *testing.T) {
 	key := makeTestKey()
 
 	// Do a real lock first so .monban-data and manifest exist
-	LockFolder(key, folder)
+	_ = LockFolder(key, folder)
 
 	// Now simulate crash during "removing-originals" — journal says removing but
 	// some originals might still be around (shouldn't matter, they're already encrypted)
@@ -257,7 +257,7 @@ func TestRecoverFromJournalRemovingOriginals(t *testing.T) {
 		State:     "removing-originals",
 		Timestamp: time.Now(),
 	}
-	writeJournal(folder, journal)
+	_ = writeJournal(folder, journal)
 
 	err := RecoverFromJournal(folder)
 	if err != nil {
@@ -280,10 +280,10 @@ func TestRecoverFromJournalRemovingEncrypted(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock then start unlocking
-	LockFolder(key, folder)
+	_ = LockFolder(key, folder)
 	// Decrypt files manually so they exist
 	manifest, _ := loadEncryptedManifest(key, folder)
-	decryptFilesInPlace(key, manifest, folder)
+	_ = decryptFilesInPlace(key, manifest, folder)
 
 	// Simulate crash during "removing-encrypted"
 	journal := &JournalState{
@@ -292,7 +292,7 @@ func TestRecoverFromJournalRemovingEncrypted(t *testing.T) {
 		State:     "removing-encrypted",
 		Timestamp: time.Now(),
 	}
-	writeJournal(folder, journal)
+	_ = writeJournal(folder, journal)
 
 	err := RecoverFromJournal(folder)
 	if err != nil {
@@ -315,7 +315,7 @@ func TestUnlockWithWrongKey(t *testing.T) {
 	rightKey := makeTestKey()
 	wrongKey := bytes.Repeat([]byte{0x99}, 32)
 
-	LockFolder(rightKey, folder)
+	_ = LockFolder(rightKey, folder)
 
 	err := UnlockFolder(wrongKey, folder)
 	if err == nil {
@@ -326,7 +326,7 @@ func TestUnlockWithWrongKey(t *testing.T) {
 func TestLockEmptyFolder(t *testing.T) {
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "empty")
-	os.MkdirAll(folder, 0700)
+	_ = os.MkdirAll(folder, 0700)
 	key := makeTestKey()
 
 	if err := LockFolder(key, folder); err != nil {
@@ -341,13 +341,13 @@ func TestLockEmptyFolder(t *testing.T) {
 func TestLockPreservesFilePermissions(t *testing.T) {
 	dir := t.TempDir()
 	folder := filepath.Join(dir, "perms")
-	os.MkdirAll(folder, 0700)
-	os.WriteFile(filepath.Join(folder, "exec.sh"), []byte("#!/bin/sh"), 0755)
-	os.WriteFile(filepath.Join(folder, "readonly.txt"), []byte("ro"), 0444)
+	_ = os.MkdirAll(folder, 0700)
+	_ = os.WriteFile(filepath.Join(folder, "exec.sh"), []byte("#!/bin/sh"), 0755)
+	_ = os.WriteFile(filepath.Join(folder, "readonly.txt"), []byte("ro"), 0444)
 
 	key := makeTestKey()
-	LockFolder(key, folder)
-	UnlockFolder(key, folder)
+	_ = LockFolder(key, folder)
+	_ = UnlockFolder(key, folder)
 
 	info1, _ := os.Stat(filepath.Join(folder, "exec.sh"))
 	if info1.Mode().Perm() != 0755 {
@@ -362,8 +362,8 @@ func TestLockPreservesFilePermissions(t *testing.T) {
 
 func TestFolderSize(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.txt"), bytes.Repeat([]byte("x"), 1000), 0600)
-	os.WriteFile(filepath.Join(dir, "b.txt"), bytes.Repeat([]byte("y"), 500), 0600)
+	_ = os.WriteFile(filepath.Join(dir, "a.txt"), bytes.Repeat([]byte("x"), 1000), 0600)
+	_ = os.WriteFile(filepath.Join(dir, "b.txt"), bytes.Repeat([]byte("y"), 500), 0600)
 
 	size, err := FolderSize(dir)
 	if err != nil {
@@ -387,10 +387,10 @@ func TestFolderSizeEmpty(t *testing.T) {
 
 func TestCountFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0600)
-	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0600)
-	os.MkdirAll(filepath.Join(dir, "sub"), 0700)
-	os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("c"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0600)
+	_ = os.MkdirAll(filepath.Join(dir, "sub"), 0700)
+	_ = os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("c"), 0600)
 
 	count, err := CountFiles(dir)
 	if err != nil {
@@ -485,7 +485,7 @@ func createTestFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secret.txt")
-	os.WriteFile(path, []byte("secret content"), 0644)
+	_ = os.WriteFile(path, []byte("secret content"), 0644)
 	return path
 }
 
@@ -553,11 +553,11 @@ func TestLockUnlockFileRoundTrip(t *testing.T) {
 func TestLockFilePreservesPermissions(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "exec.sh")
-	os.WriteFile(path, []byte("#!/bin/sh\necho hi"), 0755)
+	_ = os.WriteFile(path, []byte("#!/bin/sh\necho hi"), 0755)
 
 	key := makeTestKey()
-	LockFile(key, path)
-	UnlockFile(key, path)
+	_ = LockFile(key, path)
+	_ = UnlockFile(key, path)
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -571,11 +571,11 @@ func TestLockFilePreservesPermissions(t *testing.T) {
 func TestLockFilePreservesModTime(t *testing.T) {
 	path := createTestFile(t)
 	fixedTime := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
-	os.Chtimes(path, fixedTime, fixedTime)
+	_ = os.Chtimes(path, fixedTime, fixedTime)
 
 	key := makeTestKey()
-	LockFile(key, path)
-	UnlockFile(key, path)
+	_ = LockFile(key, path)
+	_ = UnlockFile(key, path)
 
 	info, _ := os.Stat(path)
 	if !info.ModTime().Equal(fixedTime) {
@@ -588,7 +588,7 @@ func TestLockFileWrongKey(t *testing.T) {
 	rightKey := makeTestKey()
 	wrongKey := bytes.Repeat([]byte{0x99}, 32)
 
-	LockFile(rightKey, path)
+	_ = LockFile(rightKey, path)
 
 	err := UnlockFile(wrongKey, path)
 	if err == nil {
@@ -627,8 +627,8 @@ func TestRecoverFileFromJournalEncrypting(t *testing.T) {
 
 	// Simulate crash during encrypting: vault dir with partial data + journal
 	vaultDir := fileVaultDir(path)
-	os.MkdirAll(vaultDir, 0700)
-	os.WriteFile(filepath.Join(vaultDir, "data.enc"), []byte("partial"), 0600)
+	_ = os.MkdirAll(vaultDir, 0700)
+	_ = os.WriteFile(filepath.Join(vaultDir, "data.enc"), []byte("partial"), 0600)
 
 	journal := &JournalState{
 		Operation: "lock",
@@ -636,7 +636,7 @@ func TestRecoverFileFromJournalEncrypting(t *testing.T) {
 		State:     "encrypting",
 		Timestamp: time.Now(),
 	}
-	writeJournal(vaultDir, journal)
+	_ = writeJournal(vaultDir, journal)
 
 	if err := RecoverFileFromJournal(path); err != nil {
 		t.Fatal(err)
@@ -659,9 +659,9 @@ func TestRecoverFileFromJournalRemovingEncrypted(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock, then decrypt manually, then simulate crash during "removing-encrypted"
-	LockFile(key, path)
+	_ = LockFile(key, path)
 	vaultDir := fileVaultDir(path)
-	DecryptFile(key, filepath.Join(vaultDir, "data.enc"), path)
+	_ = DecryptFile(key, filepath.Join(vaultDir, "data.enc"), path)
 
 	journal := &JournalState{
 		Operation: "unlock",
@@ -669,7 +669,7 @@ func TestRecoverFileFromJournalRemovingEncrypted(t *testing.T) {
 		State:     "removing-encrypted",
 		Timestamp: time.Now(),
 	}
-	writeJournal(vaultDir, journal)
+	_ = writeJournal(vaultDir, journal)
 
 	if err := RecoverFileFromJournal(path); err != nil {
 		t.Fatal(err)
@@ -700,11 +700,11 @@ func TestLockFileLargeContent(t *testing.T) {
 	path := filepath.Join(dir, "large.bin")
 	// 256KB to exercise multiple encryption chunks (64KB each)
 	content := bytes.Repeat([]byte{0xAB}, 256*1024)
-	os.WriteFile(path, content, 0600)
+	_ = os.WriteFile(path, content, 0600)
 
 	key := makeTestKey()
-	LockFile(key, path)
-	UnlockFile(key, path)
+	_ = LockFile(key, path)
+	_ = UnlockFile(key, path)
 
 	data, _ := os.ReadFile(path)
 	if !bytes.Equal(data, content) {
@@ -731,11 +731,11 @@ func TestFileVaultDirIsOpaque(t *testing.T) {
 
 func TestCollectFilesSkipsMonbanFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "real.txt"), []byte("keep"), 0600)
-	os.WriteFile(filepath.Join(dir, ".monban-journal.json"), []byte("{}"), 0600)
-	os.WriteFile(filepath.Join(dir, ".monban-manifest.enc"), []byte("enc"), 0600)
-	os.MkdirAll(filepath.Join(dir, ".monban-data"), 0700)
-	os.WriteFile(filepath.Join(dir, ".monban-data", "a.enc"), []byte("enc"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, "real.txt"), []byte("keep"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, ".monban-journal.json"), []byte("{}"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, ".monban-manifest.enc"), []byte("enc"), 0600)
+	_ = os.MkdirAll(filepath.Join(dir, ".monban-data"), 0700)
+	_ = os.WriteFile(filepath.Join(dir, ".monban-data", "a.enc"), []byte("enc"), 0600)
 
 	files, err := collectFiles(dir)
 	if err != nil {

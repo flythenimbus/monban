@@ -11,7 +11,12 @@ env:
   GITHUB_TOKEN: ${{ secrets.GH_PAT }}
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
   build-darwin:
+    needs: [test]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +80,7 @@ jobs:
           path: desktop/release/*.zip
 
   build-linux-amd64:
+    needs: [test]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -120,6 +126,7 @@ jobs:
   # Available free for public repos. For private repos, requires
   # GitHub Team/Enterprise or self-hosted ARM runner.
   build-linux-arm64:
+    needs: [test]
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4

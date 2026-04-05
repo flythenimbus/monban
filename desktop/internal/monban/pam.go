@@ -143,7 +143,7 @@ func writeFilePrivileged(path, content string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
+	defer func() { _ = os.Remove(tmp) }()
 
 	cmd := fmt.Sprintf("cp %s %s && chmod %o %s",
 		shellQuote(tmp), shellQuote(path), mode, shellQuote(path))
@@ -166,7 +166,7 @@ func BatchPrivilegedWrites(writes []PrivilegedWrite) error {
 		if err != nil {
 			// Clean up any temp files already created.
 			for _, t := range tmpFiles {
-				os.Remove(t)
+				_ = os.Remove(t)
 			}
 			return err
 		}
@@ -181,7 +181,7 @@ func BatchPrivilegedWrites(writes []PrivilegedWrite) error {
 
 	defer func() {
 		for _, t := range tmpFiles {
-			os.Remove(t)
+			_ = os.Remove(t)
 		}
 	}()
 

@@ -137,7 +137,7 @@ func Assert(pin string, credIDs [][]byte, hmacSalt []byte) (*FIDOAssertion, erro
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("Assertion: %w", err)
+		return nil, fmt.Errorf("assertion: %w", err)
 	}
 
 	return &FIDOAssertion{
