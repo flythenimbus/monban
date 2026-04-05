@@ -17,8 +17,13 @@ import CanoKey from "@/components/keys/CanoKey.astro";
 
 const githubRepo = "https://github.com/flythenimbus/monban";
 const releasesUrl = `${githubRepo}/releases/latest`;
-const macosDownload = `${githubRepo}/releases/latest/download/monban_darwin_universal.zip`;
-const linuxDownload = `${githubRepo}/releases/latest/download/monban_linux_amd64.tar.gz`;
+const macosDownload = `${githubRepo}/releases/latest/download/monban_macos_universal.zip`;
+const linuxTarballAmd64 = `${githubRepo}/releases/latest/download/monban_linux_amd64.tar.gz`;
+const linuxTarballArm64 = `${githubRepo}/releases/latest/download/monban_linux_arm64.tar.gz`;
+const debAmd64 = `${githubRepo}/releases/latest/download/monban_amd64.deb`;
+const debArm64 = `${githubRepo}/releases/latest/download/monban_arm64.deb`;
+const rpmAmd64 = `${githubRepo}/releases/latest/download/monban_amd64.rpm`;
+const rpmArm64 = `${githubRepo}/releases/latest/download/monban_arm64.rpm`;
 const sponsorUrl = `${githubRepo}/sponsor`;
 ---
 
@@ -588,7 +593,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                 </p>
 
                 <div
-                    class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto"
+                    class="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl mx-auto"
                 >
                     <Card
                         class="!py-0 !gap-0 group hover:border-primary/30 transition-colors"
@@ -613,7 +618,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     </div>
                                     <div class="font-semibold">macOS</div>
                                     <div class="text-xs text-muted-foreground">
-                                        Apple Silicon
+                                        Universal (Apple Silicon + Intel)
                                     </div>
                                 </div>
                                 <svg
@@ -635,7 +640,77 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                     <Card
                         class="!py-0 !gap-0 group hover:border-primary/30 transition-colors"
                     >
-                        <a href={linuxDownload} class="block">
+                        <a href={debAmd64} class="block">
+                            <CardContent class="flex items-center gap-4 py-4">
+                                <div
+                                    class="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted group-hover:bg-primary/10 transition-colors"
+                                >
+                                    <img src="/debian.svg" alt="Debian" class="size-6 opacity-60 group-hover:opacity-100 transition-opacity invert" />
+                                </div>
+                                <div class="text-left">
+                                    <div class="text-xs text-muted-foreground">
+                                        Download for
+                                    </div>
+                                    <div class="font-semibold">Debian / Ubuntu</div>
+                                    <div class="text-xs text-muted-foreground">
+                                        .deb (x86_64)
+                                    </div>
+                                </div>
+                                <svg
+                                    class="size-4 ml-auto text-muted-foreground group-hover:text-primary-accent transition-colors"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    ><path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                    ></path></svg
+                                >
+                            </CardContent>
+                        </a>
+                    </Card>
+
+                    <Card
+                        class="!py-0 !gap-0 group hover:border-primary/30 transition-colors"
+                    >
+                        <a href={rpmAmd64} class="block">
+                            <CardContent class="flex items-center gap-4 py-4">
+                                <div
+                                    class="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted group-hover:bg-primary/10 transition-colors"
+                                >
+                                    <img src="/fedora.svg" alt="Fedora" class="size-6 opacity-60 group-hover:opacity-100 transition-opacity invert" />
+                                </div>
+                                <div class="text-left">
+                                    <div class="text-xs text-muted-foreground">
+                                        Download for
+                                    </div>
+                                    <div class="font-semibold">Fedora / RHEL</div>
+                                    <div class="text-xs text-muted-foreground">
+                                        .rpm (x86_64)
+                                    </div>
+                                </div>
+                                <svg
+                                    class="size-4 ml-auto text-muted-foreground group-hover:text-primary-accent transition-colors"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    ><path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                    ></path></svg
+                                >
+                            </CardContent>
+                        </a>
+                    </Card>
+
+                    <Card
+                        class="!py-0 !gap-0 group hover:border-primary/30 transition-colors"
+                    >
+                        <a href={linuxTarballAmd64} class="block">
                             <CardContent class="flex items-center gap-4 py-4">
                                 <div
                                     class="flex size-12 shrink-0 items-center justify-center rounded-lg bg-muted group-hover:bg-primary/10 transition-colors"
@@ -655,7 +730,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     </div>
                                     <div class="font-semibold">Linux</div>
                                     <div class="text-xs text-muted-foreground">
-                                        x86_64
+                                        tar.gz (x86_64)
                                     </div>
                                 </div>
                                 <svg
@@ -676,13 +751,14 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                 </div>
 
                 <p class="mt-6 text-sm text-muted-foreground">
-                    Or browse <a
+                    Also available as ARM64 builds.
+                    <a
                         href={releasesUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         class="text-primary-accent hover:underline underline-offset-4"
-                        >all releases</a
-                    > on GitHub.
+                        >All releases on GitHub</a
+                    >.
                 </p>
             </div>
         </section>

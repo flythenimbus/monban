@@ -23,11 +23,11 @@ builds:
 
 archives:
   - format: tar.gz
-    name_template: "monban_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "monban_{{ .Os }}_{{ .Arch }}"
 
 nfpms:
   - package_name: monban
-    file_name_template: "{{ .ConventionalFileName }}"
+    file_name_template: "monban_{{ .Arch }}"
     vendor: Monban
     description: Security key-based folder encryption
     license: MIT
