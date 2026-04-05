@@ -27,6 +27,7 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           version: 3.x
+          repo-token: ${{ secrets.GH_PAT }}
 
       - name: Install arm64 libfido2
         run: brew install libfido2
@@ -89,6 +90,7 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           version: 3.x
+          repo-token: ${{ secrets.GH_PAT }}
 
       - name: Install system dependencies
         run: |
@@ -133,6 +135,7 @@ jobs:
       - uses: arduino/setup-task@v2
         with:
           version: 3.x
+          repo-token: ${{ secrets.GH_PAT }}
 
       - name: Install system dependencies
         run: |
