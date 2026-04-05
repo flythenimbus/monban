@@ -8,8 +8,8 @@ Security key encryption for macOS and Linux.
 
 Monban encrypts your folders and individual files using AES-256-GCM, unlocked
 only by a FIDO2 security key assertion (PIN + physical touch). Everything is
-encrypted in place. No external runtime dependencies. The lock is
-cryptographic, not UI-based.
+encrypted in place. No external runtime dependencies. The protection is real
+encryption, not just a hidden folder.
 
 ## Features
 
@@ -55,10 +55,6 @@ cryptographic, not UI-based.
 ## Contributing
 
 Contributions are welcome. Please open an issue to discuss your idea before submitting a pull request.
-
-## Sponsor
-
-If you find Monban useful, consider [sponsoring the project](https://github.com/flythenimbus/monban/sponsor) to support ongoing development.
 
 ## License
 
