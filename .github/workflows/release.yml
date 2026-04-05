@@ -67,7 +67,7 @@ jobs:
 
           # Zip the .app
           mkdir -p release
-          cd bin && zip -ry "../release/monban_${VERSION}_darwin_universal.zip" Monban.app
+          cd bin && zip -ry "../release/monban_${VERSION}_macos_universal.zip" Monban.app
 
       - uses: actions/upload-artifact@v4
         with:

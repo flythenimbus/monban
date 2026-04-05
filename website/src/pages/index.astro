@@ -13,11 +13,12 @@ import Layout from "@/layouts/Layout.astro";
 import YubiKey from "@/components/keys/YubiKey.astro";
 import GoogleTitan from "@/components/keys/GoogleTitan.astro";
 import NitroKey from "@/components/keys/NitroKey.astro";
+import CanoKey from "@/components/keys/CanoKey.astro";
 
 const githubRepo = "https://github.com/flythenimbus/monban";
 const releasesUrl = `${githubRepo}/releases/latest`;
-const macosDownload = `${githubRepo}/releases/latest/download/monban-macos-arm64.tar.gz`;
-const linuxDownload = `${githubRepo}/releases/latest/download/monban-linux-amd64.tar.gz`;
+const macosDownload = `${githubRepo}/releases/latest/download/monban_darwin_universal.zip`;
+const linuxDownload = `${githubRepo}/releases/latest/download/monban_linux_amd64.tar.gz`;
 const sponsorUrl = `${githubRepo}/sponsor`;
 ---
 
@@ -363,9 +364,9 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                 </div>
 
                 <div class="relative overflow-hidden">
-                    <div class="flex animate-scroll gap-12 items-center w-max">
-                        <div class="flex gap-12 items-center shrink-0">
-                            <div class="flex flex-col items-center gap-3 w-28">
+                    <div class="flex animate-scroll items-center w-max">
+                        <div class="flex gap-12 items-center shrink-0 pr-12">
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
                                 <YubiKey
                                     class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
@@ -373,7 +374,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     >YubiKey</span
                                 >
                             </div>
-                            <div class="flex flex-col items-center gap-3 w-28">
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
                                 <GoogleTitan
                                     class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
@@ -381,7 +382,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     >Google Titan</span
                                 >
                             </div>
-                            <div class="flex flex-col items-center gap-3 w-28">
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
                                 <NitroKey
                                     class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
@@ -389,11 +390,41 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     >Nitrokey</span
                                 >
                             </div>
-                            <div class="flex flex-col items-center gap-3 w-28">
-                                <img
-                                    src="/keys/canokey.png"
-                                    alt="CanoKey"
-                                    class="h-14 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <CanoKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >CanoKey</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <YubiKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >YubiKey</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <GoogleTitan
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >Google Titan</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <NitroKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >Nitrokey</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <CanoKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
                                 <span class="text-xs text-muted-foreground"
                                     >CanoKey</span
@@ -401,8 +432,8 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                             </div>
                         </div>
                         <!-- Duplicate for seamless loop -->
-                        <div class="flex gap-12 items-center shrink-0">
-                            <div class="flex flex-col items-center gap-3 w-28">
+                        <div class="flex gap-12 items-center shrink-0 pr-12">
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
                                 <YubiKey
                                     class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
@@ -410,7 +441,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     >YubiKey</span
                                 >
                             </div>
-                            <div class="flex flex-col items-center gap-3 w-28">
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
                                 <GoogleTitan
                                     class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
@@ -418,7 +449,7 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     >Google Titan</span
                                 >
                             </div>
-                            <div class="flex flex-col items-center gap-3 w-28">
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
                                 <NitroKey
                                     class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
@@ -426,11 +457,41 @@ const sponsorUrl = `${githubRepo}/sponsor`;
                                     >Nitrokey</span
                                 >
                             </div>
-                            <div class="flex flex-col items-center gap-3 w-28">
-                                <img
-                                    src="/keys/canokey.png"
-                                    alt="CanoKey"
-                                    class="h-14 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <CanoKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >CanoKey</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <YubiKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >YubiKey</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <GoogleTitan
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >Google Titan</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <NitroKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
+                                />
+                                <span class="text-xs text-muted-foreground"
+                                    >Nitrokey</span
+                                >
+                            </div>
+                            <div class="flex flex-col items-center justify-end gap-3 w-28 h-24">
+                                <CanoKey
+                                    class="h-10 text-foreground opacity-70 hover:opacity-100 transition-opacity"
                                 />
                                 <span class="text-xs text-muted-foreground"
                                     >CanoKey</span
