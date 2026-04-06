@@ -19,6 +19,7 @@ export function GeneralTab() {
 	const [adding, setAdding] = useState(false);
 	const [sudoCmd, setSudoCmd] = useState("");
 	const [copied, setCopied] = useState(false);
+	const isMac = navigator.platform.startsWith("Mac");
 
 	const handleSudoGate = async (value: SudoGateMode) => {
 		onSetting("sudo_gate", value);
@@ -99,7 +100,10 @@ export function GeneralTab() {
 						options={[
 							{ value: "off", label: "Off" },
 							{ value: "default", label: "Default" },
-							{ value: "strict", label: "Strict (sudo + su)" },
+							{
+								value: "strict",
+								label: isMac ? "Strict" : "Strict (sudo + su)",
+							},
 						]}
 					/>
 				</div>

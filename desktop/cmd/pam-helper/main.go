@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"monban/internal/monban"
@@ -114,8 +115,9 @@ func install(mode string) error {
 	fmt.Printf("Configured %s (%s mode)\n", pamPath, mode)
 
 	// Strict mode also gates su to prevent root user activation bypass.
+	// On macOS, /etc/pam.d/su is SIP-protected and cannot be modified.
 	suPath := monban.PamSuPath()
-	if mode == "strict" {
+	if runtime.GOOS != "darwin" && mode == "strict" {
 		suData, _ := os.ReadFile(suPath)
 		suLines := strings.Split(string(suData), "\n")
 
@@ -200,6 +202,7 @@ func removePamTag(path string) {
 	}
 	_ = os.WriteFile(path, []byte(strings.Join(filtered, "\n")), 0444)
 }
+
 
 func authenticate() error {
 	// Load the system-level secure config (root-owned, world-readable).
