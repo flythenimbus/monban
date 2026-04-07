@@ -16,7 +16,7 @@ builds:
       - -trimpath
       - -buildvcs=false
     ldflags:
-      - -w -s
+      - -w -s -X main.Version={{.Version}}
     env:
       - CGO_ENABLED=1
       - CGO_LDFLAGS=-lfido2

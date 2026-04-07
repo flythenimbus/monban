@@ -11,5 +11,6 @@ export {
     CombinedSettings,
     DiskSpaceInfo,
     KeyInfo,
+    UpdateInfo,
     VaultStatus
 } from "./models.js";

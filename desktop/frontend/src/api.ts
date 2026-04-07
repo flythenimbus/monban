@@ -1,5 +1,11 @@
 import * as App from "../bindings/monban/app";
-import type { AppStatus, DiskSpaceInfo, KeyInfo, Settings } from "./types";
+import type {
+	AppStatus,
+	DiskSpaceInfo,
+	KeyInfo,
+	Settings,
+	UpdateInfo,
+} from "./types";
 
 export const api = {
 	isRegistered: (): Promise<boolean> => App.IsRegistered(),
@@ -50,4 +56,9 @@ export const api = {
 		App.GetSudoGateCommand(mode),
 
 	revealSecureConfig: (): Promise<void> => App.RevealSecureConfig(),
+
+	getVersion: (): Promise<string> => App.GetVersion(),
+
+	checkForUpdate: (): Promise<UpdateInfo> =>
+		App.CheckForUpdate() as unknown as Promise<UpdateInfo>,
 };

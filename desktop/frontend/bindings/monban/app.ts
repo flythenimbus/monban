@@ -40,6 +40,12 @@ export function CheckDiskSpace(path: string): $CancellablePromise<$models.DiskSp
     });
 }
 
+export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo> {
+    return $Call.ByID(2347956003).then(($result: any) => {
+        return $$createType1($result);
+    });
+}
+
 /**
  * DetectDevice checks if a FIDO2 device is connected.
  */
@@ -67,7 +73,7 @@ export function ExitFullscreen(): $CancellablePromise<void> {
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
     return $Call.ByID(2554697378).then(($result: any) => {
-        return $$createType1($result);
+        return $$createType2($result);
     });
 }
 
@@ -76,7 +82,7 @@ export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
  */
 export function GetStatus(): $CancellablePromise<$models.AppStatus> {
     return $Call.ByID(1043986649).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType3($result);
     });
 }
 
@@ -87,6 +93,10 @@ export function GetStatus(): $CancellablePromise<$models.AppStatus> {
  */
 export function GetSudoGateCommand(mode: string): $CancellablePromise<string> {
     return $Call.ByID(2404724622, mode);
+}
+
+export function GetVersion(): $CancellablePromise<string> {
+    return $Call.ByID(1049863377);
 }
 
 export function IsLocked(): $CancellablePromise<boolean> {
@@ -102,7 +112,7 @@ export function IsRegistered(): $CancellablePromise<boolean> {
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(1130532105).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType5($result);
     });
 }
 
@@ -179,7 +189,8 @@ export function UpdateSettings(settings: $models.CombinedSettings): $Cancellable
 
 // Private type creation functions
 const $$createType0 = $models.DiskSpaceInfo.createFrom;
-const $$createType1 = $models.CombinedSettings.createFrom;
-const $$createType2 = $models.AppStatus.createFrom;
-const $$createType3 = $models.KeyInfo.createFrom;
-const $$createType4 = $Create.Array($$createType3);
+const $$createType1 = $models.UpdateInfo.createFrom;
+const $$createType2 = $models.CombinedSettings.createFrom;
+const $$createType3 = $models.AppStatus.createFrom;
+const $$createType4 = $models.KeyInfo.createFrom;
+const $$createType5 = $Create.Array($$createType4);

@@ -1,6 +1,7 @@
 import { Alert, Tabs } from "../../components";
 import { useAutoResize } from "../../hooks/useAutoResize";
 import { AdminProvider, useAdmin } from "./AdminContext";
+import { AboutTab } from "./tabs/AboutTab";
 import { GeneralTab } from "./tabs/GeneralTab";
 import { KeysTab } from "./tabs/KeysTab";
 
@@ -34,6 +35,11 @@ function AdminPanelInner() {
 						key: "keys",
 						label: "Keys",
 						content: <KeysTab />,
+					},
+					{
+						key: "about",
+						label: "About",
+						content: <AboutTab />,
 					},
 				]}
 			/>

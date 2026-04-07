@@ -44,3 +44,10 @@ export interface Settings {
 	force_authentication: boolean;
 	sudo_gate: SudoGateMode;
 }
+
+export interface UpdateInfo {
+	current_version: string;
+	latest_version: string;
+	update_available: boolean;
+	release_url: string;
+}

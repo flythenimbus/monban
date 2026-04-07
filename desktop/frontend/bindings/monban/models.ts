@@ -125,6 +125,39 @@ export class KeyInfo {
     }
 }
 
+export class UpdateInfo {
+    "current_version": string;
+    "latest_version": string;
+    "update_available": boolean;
+    "release_url": string;
+
+    /** Creates a new UpdateInfo instance. */
+    constructor($$source: Partial<UpdateInfo> = {}) {
+        if (!("current_version" in $$source)) {
+            this["current_version"] = "";
+        }
+        if (!("latest_version" in $$source)) {
+            this["latest_version"] = "";
+        }
+        if (!("update_available" in $$source)) {
+            this["update_available"] = false;
+        }
+        if (!("release_url" in $$source)) {
+            this["release_url"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new UpdateInfo instance from a string or object.
+     */
+    static createFrom($$source: any = {}): UpdateInfo {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new UpdateInfo($$parsedSource as Partial<UpdateInfo>);
+    }
+}
+
 export class VaultStatus {
     "label": string;
     "path": string;
