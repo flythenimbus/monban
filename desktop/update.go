@@ -31,7 +31,7 @@ func (a *App) CheckForUpdate() (UpdateInfo, error) {
 	if err != nil {
 		return info, fmt.Errorf("checking for updates: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return info, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -56,8 +56,8 @@ func (a *App) CheckForUpdate() (UpdateInfo, error) {
 // compareSemver returns -1, 0, or 1.
 func compareSemver(current, latest string) int {
 	var cMaj, cMin, cPat, lMaj, lMin, lPat int
-	fmt.Sscanf(current, "%d.%d.%d", &cMaj, &cMin, &cPat)
-	fmt.Sscanf(latest, "%d.%d.%d", &lMaj, &lMin, &lPat)
+	_, _ = fmt.Sscanf(current, "%d.%d.%d", &cMaj, &cMin, &cPat)
+	_, _ = fmt.Sscanf(latest, "%d.%d.%d", &lMaj, &lMin, &lPat)
 
 	switch {
 	case cMaj != lMaj:

@@ -10,8 +10,14 @@ export function UpdateAlert({ onError }: { onError: (msg: string) => void }) {
 	const [checking, setChecking] = useState(false);
 
 	useEffect(() => {
-		api.getVersion().then(setVersion).catch(() => {});
-		api.checkForUpdate().then(setUpdateInfo).catch(() => {});
+		api
+			.getVersion()
+			.then(setVersion)
+			.catch(() => {});
+		api
+			.checkForUpdate()
+			.then(setUpdateInfo)
+			.catch(() => {});
 	}, []);
 
 	const handleCheckUpdate = async () => {
