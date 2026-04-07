@@ -56,6 +56,18 @@ encryption, not just a hidden folder.
 
 Contributions are welcome. Please open an issue to discuss your idea before submitting a pull request.
 
+## Donate
+
+Monban is free and open source. If you find it useful, consider supporting development with Monero.
+
+<p align="center">
+  <img src="website/public/monero.png" alt="Monero donation QR code" width="200" />
+</p>
+
+```
+4AC3txuTwFm4fkamoYeK47c9EpnPwbreHNxJeKDYHiDNN6weD5vVA4BCH1azQhSxa6JjereuVpt21Pu2MyRDFDNNH6KGnWq
+```
+
 ## License
 
 Monban is licensed under the [GNU General Public License v3.0](LICENSE).
