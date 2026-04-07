@@ -194,3 +194,21 @@ jobs:
             --title "Monban ${{ github.ref_name }}" \
             --generate-notes \
             artifacts/*
+
+      - name: Create Codeberg release
+        env:
+          CB_TOKEN: ${{ secrets.CB_PAT }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          RELEASE_ID=$(curl -s -X POST \
+            -H "Authorization: token $CB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"tag_name\": \"$TAG\", \"name\": \"Monban $TAG\", \"body\": \"See [GitHub release](https://github.com/flythenimbus/monban/releases/tag/$TAG) for full notes.\"}" \
+            "https://codeberg.org/api/v1/repos/flythenimbus/monban/releases" | jq -r '.id')
+
+          for file in artifacts/*; do
+            curl -s -X POST \
+              -H "Authorization: token $CB_TOKEN" \
+              -F "attachment=@$file" \
+              "https://codeberg.org/api/v1/repos/flythenimbus/monban/releases/$RELEASE_ID/assets"
+          done
