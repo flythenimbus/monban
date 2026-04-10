@@ -40,6 +40,14 @@ export const api = {
 	removeFolder: (vaultPath: string): Promise<void> =>
 		App.RemoveFolder(vaultPath),
 
+	decryptLazyVault: (path: string, pin: string): Promise<void> =>
+		App.DecryptLazyVault(path, pin),
+
+	lockVault: (path: string): Promise<void> => App.LockVault(path),
+
+	updateVaultMode: (path: string, mode: string, pin: string): Promise<void> =>
+		App.UpdateVaultMode(path, mode, pin),
+
 	exitFullscreen: (): Promise<void> => App.ExitFullscreen(),
 
 	enterFullscreen: (): Promise<void> => App.EnterFullscreen(),

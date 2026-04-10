@@ -19,11 +19,14 @@ export interface AppStatus {
 	vaults: VaultStatus[];
 }
 
+export type DecryptMode = "eager" | "lazy" | "lazy_strict";
+
 export interface VaultStatus {
 	label: string;
 	path: string;
 	type?: string;
 	locked: boolean;
+	decrypt_mode?: DecryptMode;
 }
 
 export interface KeyInfo {

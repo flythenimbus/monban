@@ -17,6 +17,7 @@ encryption, not just a hidden folder.
 - **Multiple keys per vault**: register as many security keys as you want, so losing one doesn't mean losing access
 - **Post-login 2FA**: opt-in kiosk lock screen that requires security key authentication after OS sign-in
 - **File and folder encryption**: encrypt individual files or entire folders, all in place
+- **Lazy decryption**: choose per vault whether to decrypt eagerly on unlock, on demand, or on demand with re-authentication (PIN + touch)
 - **Protect sudo and su**: prevent privilege escalation without security key authentication
 - **Easy backup**: export your vault configuration to recover access and prevent lockout
 
@@ -26,6 +27,7 @@ encryption, not just a hidden folder.
 2. Add folders or individual files to protect
 3. On lock (app close, sleep, or logout), everything is encrypted in place
 4. On unlock, enter your PIN and touch the key to decrypt
+5. Optionally set vaults to lazy or strict mode — lazy vaults stay encrypted until you decrypt them on demand, strict vaults require a fresh PIN + touch each time
 
 ## Security
 
@@ -35,6 +37,7 @@ encryption, not just a hidden folder.
 - **Auto-lock**: Vaults lock on sleep, logout, app quit, and SIGTERM/SIGINT.
 - **Metadata protection**: Manifests are encrypted. Original filenames and directory structure are not visible when locked. Individual file vaults are stored in opaque directories with hashed names.
 - **Crash safety**: A write-ahead journal ensures files are never lost during lock/unlock, even on power failure.
+- **Per-vault strict keys**: Strict mode vaults use a unique encryption key derived per vault path. The key only exists in memory during an active re-authentication and is zeroed immediately after.
 - **No plaintext key material touches the filesystem.**
 
 ## Supported Keys

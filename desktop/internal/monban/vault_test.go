@@ -729,6 +729,135 @@ func TestFileVaultDirIsOpaque(t *testing.T) {
 	}
 }
 
+func TestLockWithOneKeyUnlockWithAnother(t *testing.T) {
+	// Simulates the lazy_strict scenario: lock with lazyStrictKey, unlock with same key
+	folder := createTestFolder(t)
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+
+	encKey, _ := DeriveEncryptionKey(master, salt)
+	lazyKey, _ := DeriveLazyStrictKey(master, salt, folder)
+
+	// Lock with lazyStrictKey
+	if err := LockFolder(lazyKey, folder); err != nil {
+		t.Fatalf("lock with lazy key failed: %v", err)
+	}
+
+	// Unlock with encKey should fail (wrong key)
+	if err := UnlockFolder(encKey, folder); err == nil {
+		t.Error("unlock with encKey should fail for lazy-strict-encrypted vault")
+	}
+
+	// Unlock with correct lazyStrictKey should succeed
+	if err := UnlockFolder(lazyKey, folder); err != nil {
+		t.Fatalf("unlock with lazy key failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(folder, "file1.txt"))
+	if string(data) != "hello" {
+		t.Error("file content should be preserved")
+	}
+}
+
+func TestLockFileWithLazyStrictKey(t *testing.T) {
+	path := createTestFile(t)
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+
+	lazyKey, _ := DeriveLazyStrictKey(master, salt, path)
+
+	if err := LockFile(lazyKey, path); err != nil {
+		t.Fatalf("lock file with lazy key failed: %v", err)
+	}
+
+	if !IsFileLocked(path) {
+		t.Error("file should be locked")
+	}
+
+	if err := UnlockFile(lazyKey, path); err != nil {
+		t.Fatalf("unlock file with lazy key failed: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != "secret content" {
+		t.Error("file content should be preserved")
+	}
+}
+
+func TestReencryptFolderWithDifferentKey(t *testing.T) {
+	// Simulates mode switch: decrypt with key A, re-encrypt with key B
+	folder := createTestFolder(t)
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+
+	encKey, _ := DeriveEncryptionKey(master, salt)
+	lazyKey, _ := DeriveLazyStrictKey(master, salt, folder)
+
+	// Start encrypted with encKey
+	if err := LockFolder(encKey, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	// Decrypt with encKey
+	if err := UnlockFolder(encKey, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-encrypt with lazyStrictKey
+	if err := LockFolder(lazyKey, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	// encKey should not work anymore
+	if err := UnlockFolder(encKey, folder); err == nil {
+		t.Error("old encKey should not decrypt after re-encryption with lazy key")
+	}
+
+	// lazyStrictKey should work
+	if err := UnlockFolder(lazyKey, folder); err != nil {
+		t.Fatalf("lazy key should decrypt after re-encryption: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(folder, "file1.txt"))
+	if string(data) != "hello" {
+		t.Error("content should survive re-encryption")
+	}
+}
+
+func TestReencryptFileWithDifferentKey(t *testing.T) {
+	path := createTestFile(t)
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+
+	encKey, _ := DeriveEncryptionKey(master, salt)
+	lazyKey, _ := DeriveLazyStrictKey(master, salt, path)
+
+	// Encrypt with encKey
+	if err := LockFile(encKey, path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Decrypt with encKey
+	if err := UnlockFile(encKey, path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-encrypt with lazyStrictKey
+	if err := LockFile(lazyKey, path); err != nil {
+		t.Fatal(err)
+	}
+
+	// lazyStrictKey should work
+	if err := UnlockFile(lazyKey, path); err != nil {
+		t.Fatalf("lazy key should work: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != "secret content" {
+		t.Error("content should survive re-encryption")
+	}
+}
+
 func TestCollectFilesSkipsMonbanFiles(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "real.txt"), []byte("keep"), 0600)

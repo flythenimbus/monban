@@ -163,6 +163,7 @@ export class VaultStatus {
     "path": string;
     "type"?: string;
     "locked": boolean;
+    "decrypt_mode": string;
 
     /** Creates a new VaultStatus instance. */
     constructor($$source: Partial<VaultStatus> = {}) {
@@ -174,6 +175,9 @@ export class VaultStatus {
         }
         if (!("locked" in $$source)) {
             this["locked"] = false;
+        }
+        if (!("decrypt_mode" in $$source)) {
+            this["decrypt_mode"] = "";
         }
 
         Object.assign(this, $$source);

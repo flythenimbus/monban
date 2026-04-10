@@ -23,10 +23,11 @@ type AppStatus struct {
 }
 
 type VaultStatus struct {
-	Label  string `json:"label"`
-	Path   string `json:"path"`
-	Type   string `json:"type,omitempty"`
-	Locked bool   `json:"locked"`
+	Label       string `json:"label"`
+	Path        string `json:"path"`
+	Type        string `json:"type,omitempty"`
+	Locked      bool   `json:"locked"`
+	DecryptMode string `json:"decrypt_mode"`
 }
 
 type KeyInfo struct {
@@ -482,8 +483,11 @@ func (a *App) Unlock(pin string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	// Unlock all vaults
+	// Unlock all eager vaults
 	for _, v := range cfg.Vaults {
+		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
+			continue
+		}
 		if err := monban.UnlockVaultEntry(encKey, v); err != nil {
 			return err
 		}
@@ -503,8 +507,28 @@ func (a *App) Lock() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.config != nil && a.encKey != nil {
-		for _, v := range a.config.Vaults {
+	if a.config == nil || a.secureCfg == nil {
+		return fmt.Errorf("config not found")
+	}
+
+	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+
+	for _, v := range a.config.Vaults {
+		mode := a.secureCfg.VaultDecryptMode(v.Path)
+		if mode == monban.DecryptLazyStrict {
+			lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, v.Path)
+			if err != nil {
+				return fmt.Errorf("deriving lazy strict key: %w", err)
+			}
+			if err := monban.LockVaultEntry(lazyKey, v); err != nil {
+				monban.ZeroBytes(lazyKey)
+				return err
+			}
+			monban.ZeroBytes(lazyKey)
+		} else {
 			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
 				return err
 			}
@@ -536,6 +560,8 @@ func (a *App) GetStatus() AppStatus {
 		return status
 	}
 
+	sc, _ := monban.LoadSecureConfig()
+
 	for _, v := range cfg.Vaults {
 		locked := false
 		if v.IsFile() {
@@ -543,11 +569,16 @@ func (a *App) GetStatus() AppStatus {
 		} else {
 			locked = monban.IsLocked(v.Path)
 		}
+		decryptMode := "eager"
+		if sc != nil {
+			decryptMode = string(sc.VaultDecryptMode(v.Path))
+		}
 		status.Vaults = append(status.Vaults, VaultStatus{
-			Label:  v.Label,
-			Path:   v.Path,
-			Type:   v.Type,
-			Locked: locked,
+			Label:       v.Label,
+			Path:        v.Path,
+			Type:        v.Type,
+			Locked:      locked,
+			DecryptMode: decryptMode,
 		})
 	}
 
@@ -806,5 +837,287 @@ func (a *App) AddFile(path string) error {
 	}
 
 	a.config = cfg
+	return nil
+}
+
+func (a *App) DecryptLazyVault(path string, pin string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.config == nil {
+		return fmt.Errorf("no config found")
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	idx := monban.FindVaultIndex(a.config.Vaults, absPath)
+	if idx == -1 {
+		return fmt.Errorf("not found: %s", absPath)
+	}
+
+	v := a.config.Vaults[idx]
+	decMode := a.secureCfg.VaultDecryptMode(absPath)
+
+	if decMode == monban.DecryptEager || decMode == monban.DecryptLazy {
+		if err := monban.UnlockVaultEntry(a.encKey, v); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	// lazy_strict: re-authenticate with FIDO2 to derive per-vault key
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 re-auth failed: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
+
+	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+
+	lazyStrictKey, err := monban.DeriveLazyStrictKey(masterSecret, hmacSalt, absPath)
+	if err != nil {
+		return fmt.Errorf("deriving lazy strict key: %w", err)
+	}
+	defer monban.ZeroBytes(lazyStrictKey)
+
+	if err := monban.UnlockVaultEntry(lazyStrictKey, v); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// LockVault re-encrypts a single vault on demand.
+func (a *App) LockVault(path string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.locked {
+		return fmt.Errorf("app is locked")
+	}
+
+	if a.config == nil || a.secureCfg == nil {
+		return fmt.Errorf("no config found")
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	idx := monban.FindVaultIndex(a.config.Vaults, absPath)
+	if idx == -1 {
+		return fmt.Errorf("not found: %s", absPath)
+	}
+
+	v := a.config.Vaults[idx]
+	mode := a.secureCfg.VaultDecryptMode(absPath)
+
+	if mode == monban.DecryptLazyStrict {
+		hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+		if err != nil {
+			return fmt.Errorf("decoding hmac salt: %w", err)
+		}
+		lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, absPath)
+		if err != nil {
+			return fmt.Errorf("deriving lazy strict key: %w", err)
+		}
+		if err := monban.LockVaultEntry(lazyKey, v); err != nil {
+			monban.ZeroBytes(lazyKey)
+			return err
+		}
+		monban.ZeroBytes(lazyKey)
+	} else {
+		if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// fidoReauth performs FIDO2 re-authentication and returns a fresh master secret.
+// The caller is responsible for zeroing the returned secret.
+// Must be called with a.mu held.
+func (a *App) fidoReauth(pin string) ([]byte, error) {
+	sc, err := monban.LoadSecureConfig()
+	if err != nil {
+		return nil, fmt.Errorf("loading secure config: %w", err)
+	}
+
+	if len(sc.Credentials) == 0 {
+		return nil, fmt.Errorf("no credentials registered")
+	}
+
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	if err != nil {
+		return nil, fmt.Errorf("decoding hmac salt: %w", err)
+	}
+
+	credIDs := make([][]byte, len(sc.Credentials))
+	for i, c := range sc.Credentials {
+		id, err := monban.DecodeB64(c.CredentialID)
+		if err != nil {
+			return nil, fmt.Errorf("decoding credential ID: %w", err)
+		}
+		credIDs[i] = id
+	}
+
+	assertion, err := monban.Assert(pin, credIDs, hmacSalt)
+	if err != nil {
+		return nil, fmt.Errorf("FIDO2 assertion failed: %w", err)
+	}
+
+	if len(assertion.HMACSecret) == 0 {
+		return nil, fmt.Errorf("security key did not return hmac-secret")
+	}
+
+	wrappingKey, err := monban.DeriveWrappingKey(assertion.HMACSecret, hmacSalt)
+	defer monban.ZeroBytes(assertion.HMACSecret, wrappingKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var masterSecret []byte
+	var matchedCred *monban.CredentialEntry
+	for i := range sc.Credentials {
+		wrapped, err := monban.DecodeB64(sc.Credentials[i].WrappedKey)
+		if err != nil {
+			continue
+		}
+		secret, err := monban.UnwrapKey(wrappingKey, wrapped)
+		if err != nil {
+			continue
+		}
+		masterSecret = secret
+		matchedCred = &sc.Credentials[i]
+		break
+	}
+
+	if masterSecret == nil {
+		return nil, fmt.Errorf("could not unwrap master secret — no matching credential found")
+	}
+
+	pubX, err := monban.DecodeB64(matchedCred.PublicKeyX)
+	if err != nil {
+		monban.ZeroBytes(masterSecret)
+		return nil, fmt.Errorf("decoding public key X: %w", err)
+	}
+	pubY, err := monban.DecodeB64(matchedCred.PublicKeyY)
+	if err != nil {
+		monban.ZeroBytes(masterSecret)
+		return nil, fmt.Errorf("decoding public key Y: %w", err)
+	}
+	cdh := sha256.Sum256(hmacSalt)
+	if err := monban.VerifyAssertion(pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
+		monban.ZeroBytes(masterSecret)
+		return nil, fmt.Errorf("assertion verification failed: %w", err)
+	}
+
+	return masterSecret, nil
+}
+
+// UpdateVaultMode changes the decrypt mode for a vault.
+func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.locked {
+		return fmt.Errorf("must be unlocked")
+	}
+
+	if a.config == nil || a.secureCfg == nil {
+		return fmt.Errorf("no config found")
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolving path: %w", err)
+	}
+
+	idx := monban.FindVaultIndex(a.config.Vaults, absPath)
+	if idx == -1 {
+		return fmt.Errorf("not found: %s", absPath)
+	}
+
+	v := a.config.Vaults[idx]
+	newMode := monban.DecryptMode(mode)
+	oldMode := a.secureCfg.VaultDecryptMode(absPath)
+
+	if oldMode == newMode {
+		return nil
+	}
+
+	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+
+	switch {
+	case oldMode != monban.DecryptLazyStrict && newMode != monban.DecryptLazyStrict:
+		// eager <-> lazy: no re-encryption needed, just update flag
+
+	case oldMode != monban.DecryptLazyStrict && newMode == monban.DecryptLazyStrict:
+		// eager/lazy -> lazy_strict: decrypt with encKey if locked, then re-encrypt with lazyStrictKey
+		if err := monban.UnlockVaultEntry(a.encKey, v); err != nil {
+			return fmt.Errorf("decrypting vault for mode change: %w", err)
+		}
+		lazyStrictKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, absPath)
+		if err != nil {
+			return fmt.Errorf("deriving lazy strict key: %w", err)
+		}
+		if err := monban.LockVaultEntry(lazyStrictKey, v); err != nil {
+			monban.ZeroBytes(lazyStrictKey)
+			return fmt.Errorf("re-encrypting vault with lazy strict key: %w", err)
+		}
+		monban.ZeroBytes(lazyStrictKey)
+
+	case oldMode == monban.DecryptLazyStrict && newMode != monban.DecryptLazyStrict:
+		// lazy_strict -> eager/lazy: need FIDO2 re-auth to get lazyStrictKey
+		masterSecret, err := a.fidoReauth(pin)
+		if err != nil {
+			return fmt.Errorf("FIDO2 re-auth failed: %w", err)
+		}
+
+		lazyStrictKey, err := monban.DeriveLazyStrictKey(masterSecret, hmacSalt, absPath)
+		monban.ZeroBytes(masterSecret)
+		if err != nil {
+			return fmt.Errorf("deriving lazy strict key: %w", err)
+		}
+
+		if err := monban.UnlockVaultEntry(lazyStrictKey, v); err != nil {
+			monban.ZeroBytes(lazyStrictKey)
+			return fmt.Errorf("decrypting vault from lazy strict: %w", err)
+		}
+		monban.ZeroBytes(lazyStrictKey)
+
+		// If new mode is lazy, re-encrypt with encKey
+		if newMode == monban.DecryptLazy {
+			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+				return fmt.Errorf("re-encrypting vault with enc key: %w", err)
+			}
+		}
+	}
+
+	// Update the mode in secure config
+	if a.secureCfg.VaultDecryptModes == nil {
+		a.secureCfg.VaultDecryptModes = make(map[string]monban.DecryptMode)
+	}
+	if newMode == monban.DecryptEager {
+		delete(a.secureCfg.VaultDecryptModes, absPath)
+	} else {
+		a.secureCfg.VaultDecryptModes[absPath] = newMode
+	}
+
+	if err := monban.SaveSecureConfig(a.secureCfg); err != nil {
+		return fmt.Errorf("saving secure config: %w", err)
+	}
+
 	return nil
 }

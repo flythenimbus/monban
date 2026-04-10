@@ -31,6 +31,18 @@ func DeriveEncryptionKey(masterSecret, hmacSalt []byte) ([]byte, error) {
 	return key, nil
 }
 
+// DeriveLazyStrictKey derives the file encryption key from the master secret for a particular lazy_strict vault.
+// This key is used for AES-256-GCM file-level encryption for a specific vault.
+func DeriveLazyStrictKey(masterSecret, hmacSalt []byte, vaultPath string) ([]byte, error) {
+	info := []byte("monban-lazy-strict-v1:" + vaultPath)
+	r := hkdf.New(sha256.New, masterSecret, hmacSalt, info)
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(r, key); err != nil {
+		return nil, fmt.Errorf("HKDF lazy-strict key: %w", err)
+	}
+	return key, nil
+}
+
 // GenerateMasterSecret generates a random 64-byte master secret.
 // This secret is wrapped by each security key's hmac-secret derived key.
 func GenerateMasterSecret() ([]byte, error) {

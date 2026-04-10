@@ -46,6 +46,10 @@ export function CheckForUpdate(): $CancellablePromise<$models.UpdateInfo> {
     });
 }
 
+export function DecryptLazyVault(path: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2513125692, path, pin);
+}
+
 /**
  * DetectDevice checks if a FIDO2 device is connected.
  */
@@ -124,6 +128,13 @@ export function Lock(): $CancellablePromise<void> {
 }
 
 /**
+ * LockVault re-encrypts a single vault on demand.
+ */
+export function LockVault(path: string): $CancellablePromise<void> {
+    return $Call.ByID(563136070, path);
+}
+
+/**
  * Register creates a new FIDO2 credential and wraps the master secret with it.
  * If this is the first credential, generates the master secret and hmac salt.
  * If credentials already exist, wraps the existing master secret with the new key.
@@ -185,6 +196,13 @@ export function Unlock(pin: string): $CancellablePromise<void> {
  */
 export function UpdateSettings(settings: $models.CombinedSettings): $CancellablePromise<void> {
     return $Call.ByID(2894041249, settings);
+}
+
+/**
+ * UpdateVaultMode changes the decrypt mode for a vault.
+ */
+export function UpdateVaultMode(path: string, mode: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(1049583931, path, mode, pin);
 }
 
 // Private type creation functions

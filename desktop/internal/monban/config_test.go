@@ -237,3 +237,101 @@ func TestSecureConfigExistsFalse(t *testing.T) {
 		t.Error("SecureConfigExists should return false")
 	}
 }
+
+func TestVaultDecryptModeDefault(t *testing.T) {
+	sc := &SecureConfig{}
+	if sc.VaultDecryptMode("/any/path") != DecryptEager {
+		t.Error("nil map should default to eager")
+	}
+}
+
+func TestVaultDecryptModeFromMap(t *testing.T) {
+	sc := &SecureConfig{
+		VaultDecryptModes: map[string]DecryptMode{
+			"/home/user/docs":   DecryptLazy,
+			"/home/user/secret": DecryptLazyStrict,
+		},
+	}
+
+	if sc.VaultDecryptMode("/home/user/docs") != DecryptLazy {
+		t.Error("should return lazy for docs")
+	}
+	if sc.VaultDecryptMode("/home/user/secret") != DecryptLazyStrict {
+		t.Error("should return lazy_strict for secret")
+	}
+	if sc.VaultDecryptMode("/home/user/other") != DecryptEager {
+		t.Error("missing path should default to eager")
+	}
+}
+
+func TestVaultDecryptModesSerialize(t *testing.T) {
+	sc := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Credentials: []CredentialEntry{
+			{
+				Label:        "Test Key",
+				CredentialID: EncodeB64([]byte("cred-id")),
+				PublicKeyX:   EncodeB64([]byte("pub-x")),
+				PublicKeyY:   EncodeB64([]byte("pub-y")),
+				WrappedKey:   EncodeB64([]byte("wrapped")),
+			},
+		},
+		VaultDecryptModes: map[string]DecryptMode{
+			"/home/user/docs": DecryptLazy,
+		},
+	}
+
+	dir := t.TempDir()
+	secureFile := filepath.Join(dir, "credentials.json")
+
+	data, err := json.MarshalIndent(sc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secureFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadSecureConfigFrom(secureFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if loaded.VaultDecryptMode("/home/user/docs") != DecryptLazy {
+		t.Error("loaded mode should be lazy")
+	}
+	if loaded.VaultDecryptMode("/other") != DecryptEager {
+		t.Error("missing path should default to eager after load")
+	}
+}
+
+func TestVaultDecryptModesOmittedWhenEmpty(t *testing.T) {
+	sc := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Credentials: []CredentialEntry{
+			{
+				Label:        "Test Key",
+				CredentialID: EncodeB64([]byte("cred-id")),
+				PublicKeyX:   EncodeB64([]byte("pub-x")),
+				PublicKeyY:   EncodeB64([]byte("pub-y")),
+				WrappedKey:   EncodeB64([]byte("wrapped")),
+			},
+		},
+	}
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// vault_decrypt_modes should not appear when nil/empty
+	if json.Valid(data) {
+		var raw map[string]interface{}
+		_ = json.Unmarshal(data, &raw)
+		if _, exists := raw["vault_decrypt_modes"]; exists {
+			t.Error("vault_decrypt_modes should be omitted when nil")
+		}
+	}
+}

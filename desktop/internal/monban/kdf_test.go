@@ -192,3 +192,61 @@ func TestGenerateHmacSalt(t *testing.T) {
 		t.Errorf("expected 32-byte salt, got %d", len(salt))
 	}
 }
+
+func TestDeriveLazyStrictKeyDeterministic(t *testing.T) {
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+	path := "/home/user/Documents"
+
+	key1, err := DeriveLazyStrictKey(master, salt, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key2, err := DeriveLazyStrictKey(master, salt, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(key1, key2) {
+		t.Error("same inputs should produce same key")
+	}
+	if len(key1) != 32 {
+		t.Errorf("expected 32-byte key, got %d", len(key1))
+	}
+}
+
+func TestDeriveLazyStrictKeyDifferentPaths(t *testing.T) {
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+
+	key1, _ := DeriveLazyStrictKey(master, salt, "/path/a")
+	key2, _ := DeriveLazyStrictKey(master, salt, "/path/b")
+
+	if bytes.Equal(key1, key2) {
+		t.Error("different vault paths should produce different keys")
+	}
+}
+
+func TestDeriveLazyStrictKeyDiffersFromEncKey(t *testing.T) {
+	master := bytes.Repeat([]byte{0x11}, 64)
+	salt := bytes.Repeat([]byte{0x22}, 32)
+
+	encKey, _ := DeriveEncryptionKey(master, salt)
+	lazyKey, _ := DeriveLazyStrictKey(master, salt, "/any/path")
+
+	if bytes.Equal(encKey, lazyKey) {
+		t.Error("lazy strict key should differ from encryption key")
+	}
+}
+
+func TestDeriveLazyStrictKeyDiffersFromWrappingKey(t *testing.T) {
+	ikm := bytes.Repeat([]byte{0xFF}, 32)
+	salt := bytes.Repeat([]byte{0x00}, 32)
+
+	wrapping, _ := DeriveWrappingKey(ikm, salt)
+	lazy, _ := DeriveLazyStrictKey(ikm, salt, "/vault")
+
+	if bytes.Equal(wrapping, lazy) {
+		t.Error("lazy strict key should differ from wrapping key")
+	}
+}
