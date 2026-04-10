@@ -8,6 +8,14 @@ import (
 	"path/filepath"
 )
 
+type DecryptMode string
+
+const (
+	DecryptEager      DecryptMode = "eager"
+	DecryptLazy       DecryptMode = "lazy"
+	DecryptLazyStrict DecryptMode = "lazy_strict"
+)
+
 // CredentialEntry holds a registered security key's FIDO2 credential and wrapped master secret.
 type CredentialEntry struct {
 	Label        string `json:"label"`
@@ -20,11 +28,12 @@ type CredentialEntry struct {
 // SecureConfig is the root-owned config containing cryptographic material
 // and security-sensitive settings. Writable only by root.
 type SecureConfig struct {
-	RpID                string            `json:"rp_id"`
-	HmacSalt            string            `json:"hmac_salt"` // base64url, 32 bytes, immutable after init
-	Credentials         []CredentialEntry `json:"credentials"`
-	ForceAuthentication bool              `json:"force_authentication"`
-	SudoGate            string            `json:"sudo_gate"` // "off" (default), "default" (sufficient), "strict" (required)
+	RpID                string                 `json:"rp_id"`
+	HmacSalt            string                 `json:"hmac_salt"` // base64url, 32 bytes, immutable after init
+	Credentials         []CredentialEntry      `json:"credentials"`
+	ForceAuthentication bool                   `json:"force_authentication"`
+	SudoGate            string                 `json:"sudo_gate"` // "off" (default), "default" (sufficient), "strict" (required)
+	VaultDecryptModes   map[string]DecryptMode `json:"vault_decrypt_modes,omitempty"`
 }
 
 // VaultEntry describes a protected folder or file.
@@ -168,6 +177,14 @@ func SaveSecureConfig(sc *SecureConfig) error {
 		Mode:      0644,
 		MkdirPath: SecureConfigDir(),
 	}})
+}
+
+// VaultDecryptMode returns the current decrypt mode. If empty, returns `"eager"`.
+func (sc *SecureConfig) VaultDecryptMode(path string) DecryptMode {
+	if m, ok := sc.VaultDecryptModes[path]; ok {
+		return m
+	}
+	return DecryptEager
 }
 
 func SecureConfigExists() bool {
