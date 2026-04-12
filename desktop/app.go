@@ -710,6 +710,9 @@ func (a *App) AddFolder(path string) error {
 	if monban.FindVaultIndex(cfg.Vaults, absPath) != -1 {
 		return fmt.Errorf("already protected: %s", absPath)
 	}
+	if err := monban.CheckVaultOverlap(cfg.Vaults, absPath); err != nil {
+		return err
+	}
 
 	// Verify folder exists
 	info, err := os.Stat(absPath)
@@ -803,6 +806,9 @@ func (a *App) AddFile(path string) error {
 
 	if monban.FindVaultIndex(cfg.Vaults, absPath) != -1 {
 		return fmt.Errorf("already protected: %s", absPath)
+	}
+	if err := monban.CheckVaultOverlap(cfg.Vaults, absPath); err != nil {
+		return err
 	}
 
 	info, err := os.Stat(absPath)
