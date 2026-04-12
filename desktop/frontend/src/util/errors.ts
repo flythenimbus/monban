@@ -30,6 +30,14 @@ const errorMap: [RegExp, string][] = [
 	[/could not unwrap master secret/i, "Unauthorized key"],
 	[/insufficient disk space/i, "Not enough disk space"],
 	[/already protected/i, "This path is already protected"],
+	[
+		/inside existing vault/i,
+		"This path is inside a folder that's already encrypted",
+	],
+	[
+		/ancestor of existing vault/i,
+		"This path contains a folder that's already encrypted",
+	],
 	[/must be unlocked/i, "Unlock first before making changes"],
 	[
 		/cannot remove the last/i,

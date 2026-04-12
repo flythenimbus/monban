@@ -1,6 +1,10 @@
 package monban
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // LockVaultEntry locks a single vault entry (file or folder), skipping if already locked.
 func LockVaultEntry(encKey []byte, v VaultEntry) error {
@@ -50,4 +54,32 @@ func FindVaultIndex(vaults []VaultEntry, path string) int {
 		}
 	}
 	return -1
+}
+
+// CheckVaultOverlap checks whether the given path is nested inside or is an
+// ancestor of any existing vault. Returns a non-nil error describing the
+// conflict if an overlap is detected.
+func CheckVaultOverlap(vaults []VaultEntry, path string) error {
+	normNew := withTrailingSep(filepath.Clean(path))
+
+	for _, v := range vaults {
+		normExisting := withTrailingSep(filepath.Clean(v.Path))
+
+		if strings.HasPrefix(normNew, normExisting) {
+			return fmt.Errorf("path is inside existing vault %q", v.Path)
+		}
+		if strings.HasPrefix(normExisting, normNew) {
+			return fmt.Errorf("path is an ancestor of existing vault %q", v.Path)
+		}
+	}
+	return nil
+}
+
+// withTrailingSep ensures the path ends with a separator. For the root path
+// "/" this returns "/" (already ends with separator).
+func withTrailingSep(p string) string {
+	if strings.HasSuffix(p, string(filepath.Separator)) {
+		return p
+	}
+	return p + string(filepath.Separator)
 }
