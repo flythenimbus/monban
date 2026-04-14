@@ -1,7 +1,8 @@
-import { Clipboard } from "@wailsio/runtime";
+import { Clipboard, Dialogs } from "@wailsio/runtime";
 import { useState } from "react";
 import { api } from "../../../api";
 import { Button, Input, PinAuth, Select, Toggle } from "../../../components";
+import { Folder } from "../../../components/icons/Folder";
 import type { SudoGateMode } from "../../../types";
 import { friendlyError } from "../../../util/errors";
 import { useAdmin } from "../AdminContext";
@@ -33,6 +34,15 @@ export function GeneralTab() {
 		} catch {
 			setSudoCmd("");
 		}
+	};
+
+	const handleBrowse = async () => {
+		const selected = await Dialogs.OpenFile({
+			CanChooseFiles: true,
+			CanChooseDirectories: true,
+			Title: "Select a file or folder",
+		});
+		if (selected) setInputPath(selected as string);
 	};
 
 	const handleAdd = () => {
@@ -159,15 +169,26 @@ export function GeneralTab() {
 				)}
 
 				<div className="flex gap-2 mt-3">
-					<Input
-						type="text"
-						label="Path"
-						placeholder="Folder or file path"
-						value={inputPath}
-						onChange={(e) => setInputPath(e.target.value)}
-						onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-						className="flex-1"
-					/>
+					<div className="relative flex-1">
+						<Input
+							type="text"
+							label="Path"
+							placeholder="Folder or file path"
+							value={inputPath}
+							onChange={(e) => setInputPath(e.target.value)}
+							onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+							className="w-full"
+							style={{ paddingRight: "2.5rem" }}
+						/>
+						<button
+							type="button"
+							onClick={handleBrowse}
+							className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-secondary/50 hover:text-text-secondary transition-colors cursor-pointer"
+							aria-label="Browse for file or folder"
+						>
+							<Folder />
+						</button>
+					</div>
 					<Button
 						onClick={handleAdd}
 						disabled={!inputPath || addPending}
