@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/asn1"
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -46,6 +47,7 @@ func TestVerifyAssertionValid(t *testing.T) {
 	sig := signAuthData(t, key, authData, cdh[:])
 
 	err := VerifyAssertion(
+		"monban.local",
 		key.X.Bytes(),
 		key.Y.Bytes(),
 		cdh[:],
@@ -67,6 +69,7 @@ func TestVerifyAssertionBadSignature(t *testing.T) {
 	sig[len(sig)-1] ^= 0xFF
 
 	err := VerifyAssertion(
+		"monban.local",
 		key.X.Bytes(),
 		key.Y.Bytes(),
 		cdh[:],
@@ -87,6 +90,7 @@ func TestVerifyAssertionMissingUP(t *testing.T) {
 	sig := signAuthData(t, key, authData, cdh[:])
 
 	err := VerifyAssertion(
+		"monban.local",
 		key.X.Bytes(),
 		key.Y.Bytes(),
 		cdh[:],
@@ -107,6 +111,7 @@ func TestVerifyAssertionMissingUV(t *testing.T) {
 	sig := signAuthData(t, key, authData, cdh[:])
 
 	err := VerifyAssertion(
+		"monban.local",
 		key.X.Bytes(),
 		key.Y.Bytes(),
 		cdh[:],
@@ -153,6 +158,7 @@ func TestUnwrapAuthDataRawPassthrough(t *testing.T) {
 
 func TestVerifyAssertionShortAuthData(t *testing.T) {
 	err := VerifyAssertion(
+		"monban.local",
 		make([]byte, 32),
 		make([]byte, 32),
 		make([]byte, 32),
@@ -161,5 +167,72 @@ func TestVerifyAssertionShortAuthData(t *testing.T) {
 	)
 	if err == nil {
 		t.Error("short authData should fail")
+	}
+}
+
+func TestVerifyAssertionWrongRpID(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cdh := sha256.Sum256([]byte("test challenge"))
+
+	// authData built with "monban.local" rpIdHash
+	authData := buildAuthData(0x05)
+	sig := signAuthData(t, key, authData, cdh[:])
+
+	// Verify with wrong RP_ID — should fail
+	err := VerifyAssertion(
+		"attacker.local",
+		key.X.Bytes(),
+		key.Y.Bytes(),
+		cdh[:],
+		authData,
+		sig,
+	)
+	if err == nil {
+		t.Error("wrong RP_ID should fail verification")
+	}
+	if err != nil && !strings.Contains(err.Error(), "RP_ID hash mismatch") {
+		t.Errorf("expected RP_ID hash mismatch error, got: %v", err)
+	}
+}
+
+func TestVerifyAssertionEmptyRpID(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cdh := sha256.Sum256([]byte("test"))
+
+	authData := buildAuthData(0x05)
+	sig := signAuthData(t, key, authData, cdh[:])
+
+	// Empty RP_ID should fail (rpIdHash won't match "monban.local")
+	err := VerifyAssertion(
+		"",
+		key.X.Bytes(),
+		key.Y.Bytes(),
+		cdh[:],
+		authData,
+		sig,
+	)
+	if err == nil {
+		t.Error("empty RP_ID should fail verification")
+	}
+}
+
+func TestVerifyAssertionCorrectRpID(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cdh := sha256.Sum256([]byte("test"))
+
+	authData := buildAuthData(0x05)
+	sig := signAuthData(t, key, authData, cdh[:])
+
+	// Correct RP_ID should succeed
+	err := VerifyAssertion(
+		"monban.local",
+		key.X.Bytes(),
+		key.Y.Bytes(),
+		cdh[:],
+		authData,
+		sig,
+	)
+	if err != nil {
+		t.Fatalf("correct RP_ID should pass: %v", err)
 	}
 }

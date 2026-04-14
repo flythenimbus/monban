@@ -1,6 +1,7 @@
 package monban
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -30,8 +31,8 @@ func UnwrapAuthData(authDataCBOR []byte) ([]byte, error) {
 }
 
 // VerifyAssertion verifies a FIDO2 assertion signature using the stored public key.
-// Checks ECDSA P-256 signature over authData || clientDataHash, plus UP and UV flags.
-func VerifyAssertion(pubKeyX, pubKeyY []byte, clientDataHash []byte, authDataCBOR []byte, sig []byte) error {
+// Checks RP_ID hash, UP/UV flags, and ECDSA P-256 signature over authData || clientDataHash.
+func VerifyAssertion(rpID string, pubKeyX, pubKeyY []byte, clientDataHash []byte, authDataCBOR []byte, sig []byte) error {
 	authData, err := UnwrapAuthData(authDataCBOR)
 	if err != nil {
 		return fmt.Errorf("unwrapping auth data: %w", err)
@@ -39,6 +40,12 @@ func VerifyAssertion(pubKeyX, pubKeyY []byte, clientDataHash []byte, authDataCBO
 
 	if len(authData) < 37 {
 		return fmt.Errorf("authData too short: %d bytes", len(authData))
+	}
+
+	// Validate RP_ID hash (first 32 bytes of authData must be SHA-256 of rp_id)
+	expectedRpIdHash := sha256.Sum256([]byte(rpID))
+	if !bytes.Equal(authData[:32], expectedRpIdHash[:]) {
+		return fmt.Errorf("RP_ID hash mismatch")
 	}
 
 	flags := authData[32]

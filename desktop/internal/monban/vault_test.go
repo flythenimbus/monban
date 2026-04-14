@@ -878,3 +878,369 @@ func TestCollectFilesSkipsMonbanFiles(t *testing.T) {
 		t.Errorf("expected real.txt, got %s", files[0].relPath)
 	}
 }
+
+// --- Security tests ---
+
+func TestCollectFilesSkipsSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "real.txt"), []byte("real"), 0600)
+
+	// Create a symlink to a file outside the vault
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	_ = os.WriteFile(outside, []byte("secret"), 0600)
+	_ = os.Symlink(outside, filepath.Join(dir, "link.txt"))
+
+	files, err := collectFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file (symlink skipped), got %d", len(files))
+	}
+	if files[0].relPath != "real.txt" {
+		t.Errorf("expected real.txt, got %s", files[0].relPath)
+	}
+}
+
+func TestCollectFilesSkipsSymlinkDirs(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "real.txt"), []byte("real"), 0600)
+
+	// Create a symlink to an outside directory
+	outsideDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(outsideDir, "exfil.txt"), []byte("sensitive"), 0600)
+	_ = os.Symlink(outsideDir, filepath.Join(dir, "linked_dir"))
+
+	files, err := collectFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only real.txt should be collected, not files from the symlinked dir
+	for _, f := range files {
+		if f.relPath == filepath.Join("linked_dir", "exfil.txt") {
+			t.Error("symlinked directory contents should not be collected")
+		}
+	}
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+}
+
+func TestLockFolderIgnoresSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "vault")
+	_ = os.MkdirAll(folder, 0700)
+	_ = os.WriteFile(filepath.Join(folder, "real.txt"), []byte("keep"), 0600)
+
+	// Symlink pointing outside the vault
+	outside := filepath.Join(dir, "outside.txt")
+	_ = os.WriteFile(outside, []byte("do not encrypt"), 0600)
+	_ = os.Symlink(outside, filepath.Join(folder, "escape.txt"))
+
+	key := makeTestKey()
+	if err := LockFolder(key, folder); err != nil {
+		t.Fatalf("lock failed: %v", err)
+	}
+	if err := UnlockFolder(key, folder); err != nil {
+		t.Fatalf("unlock failed: %v", err)
+	}
+
+	// The outside file should be untouched
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal("outside file should still exist")
+	}
+	if string(data) != "do not encrypt" {
+		t.Error("outside file should not be modified")
+	}
+
+	// Only real.txt should be restored (symlink was skipped)
+	data, err = os.ReadFile(filepath.Join(folder, "real.txt"))
+	if err != nil {
+		t.Fatal("real.txt should be restored")
+	}
+	if string(data) != "keep" {
+		t.Errorf("real.txt: got %q, want %q", data, "keep")
+	}
+}
+
+func TestValidateManifestPathRejectsTraversal(t *testing.T) {
+	root := "/home/user/vault"
+
+	tests := []struct {
+		path    string
+		wantErr bool
+	}{
+		{"file.txt", false},
+		{"sub/file.txt", false},
+		{"../../../etc/passwd", true},
+		{"sub/../../../etc/passwd", true},
+		{"/etc/passwd", true},
+		{"..", true},
+		{"sub/../../outside", true},
+	}
+
+	for _, tt := range tests {
+		err := validateManifestPath(tt.path, root)
+		if tt.wantErr && err == nil {
+			t.Errorf("validateManifestPath(%q) should fail", tt.path)
+		}
+		if !tt.wantErr && err != nil {
+			t.Errorf("validateManifestPath(%q) should pass: %v", tt.path, err)
+		}
+	}
+}
+
+func TestDecryptRejectsTraversalInManifest(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "vault")
+	_ = os.MkdirAll(filepath.Join(folder, ".monban-data"), 0700)
+
+	key := makeTestKey()
+
+	// Create a malicious manifest with path traversal
+	manifest := &Manifest{
+		Version: 1,
+		Files: []ManifestEntry{
+			{
+				Path:    "../../../tmp/pwned",
+				EncName: "abc123.enc",
+				Size:    5,
+				Mode:    0600,
+			},
+		},
+	}
+
+	err := decryptFilesInPlace(key, manifest, folder)
+	if err == nil {
+		t.Error("decryption should fail with path traversal in manifest")
+	}
+}
+
+func TestEncryptBytesDecryptBytesRoundTrip(t *testing.T) {
+	key := makeTestKey()
+	plaintext := []byte("secret manifest data")
+
+	encrypted, err := EncryptBytes(key, plaintext)
+	if err != nil {
+		t.Fatalf("encrypt failed: %v", err)
+	}
+
+	decrypted, err := DecryptBytes(key, encrypted)
+	if err != nil {
+		t.Fatalf("decrypt failed: %v", err)
+	}
+
+	if !bytes.Equal(decrypted, plaintext) {
+		t.Errorf("round trip failed: got %q, want %q", decrypted, plaintext)
+	}
+}
+
+func TestEncryptBytesWrongKey(t *testing.T) {
+	key := makeTestKey()
+	wrongKey := bytes.Repeat([]byte{0x99}, 32)
+
+	encrypted, err := EncryptBytes(key, []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = DecryptBytes(wrongKey, encrypted)
+	if err == nil {
+		t.Error("decrypt with wrong key should fail")
+	}
+}
+
+func TestEncryptBytesEmptyPlaintext(t *testing.T) {
+	key := makeTestKey()
+
+	encrypted, err := EncryptBytes(key, []byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decrypted, err := DecryptBytes(key, encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(decrypted) != 0 {
+		t.Errorf("expected empty, got %d bytes", len(decrypted))
+	}
+}
+
+func TestManifestNoPlaintextTempFile(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "vault")
+	_ = os.MkdirAll(folder, 0700)
+
+	key := makeTestKey()
+	manifest := &Manifest{
+		Version: 1,
+		Files: []ManifestEntry{
+			{Path: "test.txt", EncName: "abc.enc", Size: 5, Mode: 0600},
+		},
+	}
+
+	if err := writeEncryptedManifest(key, folder, manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify no .tmp file exists
+	tmpPath := filepath.Join(folder, ".monban-manifest.enc.tmp")
+	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
+		t.Error("plaintext temp file should not exist after write")
+	}
+
+	// Verify the encrypted manifest can be loaded back
+	loaded, err := loadEncryptedManifest(key, folder)
+	if err != nil {
+		t.Fatalf("loading manifest failed: %v", err)
+	}
+	if len(loaded.Files) != 1 || loaded.Files[0].Path != "test.txt" {
+		t.Error("manifest content mismatch after round trip")
+	}
+}
+
+func TestRecoverFromJournalDecryptingCleansPartialFiles(t *testing.T) {
+	folder := createTestFolder(t)
+	key := makeTestKey()
+
+	// Lock the folder so encrypted data exists
+	if err := LockFolder(key, folder); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a crash during unlock "decrypting" phase:
+	// some plaintext files were partially written
+	_ = os.WriteFile(filepath.Join(folder, "file1.txt"), []byte("partial"), 0600)
+	_ = os.MkdirAll(filepath.Join(folder, "sub"), 0700)
+	_ = os.WriteFile(filepath.Join(folder, "sub", "nested.txt"), []byte("partial"), 0600)
+
+	journal := &JournalState{
+		Operation: "unlock",
+		Folder:    folder,
+		State:     "decrypting",
+		Timestamp: time.Now(),
+	}
+	_ = writeJournal(folder, journal)
+
+	err := RecoverFromJournal(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Partial plaintext files should be removed
+	if _, err := os.Stat(filepath.Join(folder, "file1.txt")); !os.IsNotExist(err) {
+		t.Error("partial plaintext file1.txt should be removed during recovery")
+	}
+	if _, err := os.Stat(filepath.Join(folder, "sub", "nested.txt")); !os.IsNotExist(err) {
+		t.Error("partial plaintext nested.txt should be removed during recovery")
+	}
+
+	// Journal should be cleaned up
+	if _, err := os.Stat(journalPath(folder)); !os.IsNotExist(err) {
+		t.Error("journal should be removed after recovery")
+	}
+
+	// Encrypted data should still be intact — can still unlock
+	if !IsLocked(folder) {
+		t.Error("vault should still be locked after recovery")
+	}
+
+	if err := UnlockFolder(key, folder); err != nil {
+		t.Fatalf("should still unlock after recovery: %v", err)
+	}
+
+	// Verify actual content is recovered
+	data, _ := os.ReadFile(filepath.Join(folder, "file1.txt"))
+	if string(data) != "hello" {
+		t.Errorf("file1.txt: got %q, want %q", data, "hello")
+	}
+}
+
+func TestRecoverFileFromJournalDecryptingCleansPartialFile(t *testing.T) {
+	path := createTestFile(t)
+	key := makeTestKey()
+
+	// Lock the file
+	if err := LockFile(key, path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate crash during unlock: partial plaintext written
+	_ = os.WriteFile(path, []byte("partial decrypt"), 0600)
+
+	vaultDir := fileVaultDir(path)
+	journal := &JournalState{
+		Operation: "unlock",
+		Folder:    path,
+		State:     "decrypting",
+		Timestamp: time.Now(),
+	}
+	_ = writeJournal(vaultDir, journal)
+
+	if err := RecoverFileFromJournal(path); err != nil {
+		t.Fatal(err)
+	}
+
+	// Partial plaintext should be removed
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("partial plaintext file should be removed during recovery")
+	}
+
+	// Encrypted vault should still be intact
+	if !IsFileLocked(path) {
+		t.Error("file should still be locked after recovery")
+	}
+
+	// Should unlock cleanly
+	if err := UnlockFile(key, path); err != nil {
+		t.Fatalf("should unlock after recovery: %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if string(data) != "secret content" {
+		t.Errorf("content: got %q, want %q", data, "secret content")
+	}
+}
+
+func TestRemovePartialDecrypts(t *testing.T) {
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "vault")
+	_ = os.MkdirAll(folder, 0700)
+
+	// Set up monban metadata that should be preserved
+	_ = os.MkdirAll(filepath.Join(folder, ".monban-data"), 0700)
+	_ = os.WriteFile(filepath.Join(folder, ".monban-data", "abc.enc"), []byte("enc"), 0600)
+	_ = os.WriteFile(filepath.Join(folder, ".monban-manifest.enc"), []byte("manifest"), 0600)
+	_ = os.WriteFile(filepath.Join(folder, ".monban-journal.json"), []byte("{}"), 0600)
+
+	// Add partial plaintext files that should be removed
+	_ = os.WriteFile(filepath.Join(folder, "partial1.txt"), []byte("junk"), 0600)
+	_ = os.MkdirAll(filepath.Join(folder, "subdir"), 0700)
+	_ = os.WriteFile(filepath.Join(folder, "subdir", "partial2.txt"), []byte("junk"), 0600)
+
+	removePartialDecrypts(folder)
+
+	// Monban files should still exist
+	if _, err := os.Stat(filepath.Join(folder, ".monban-data", "abc.enc")); err != nil {
+		t.Error(".monban-data should be preserved")
+	}
+	if _, err := os.Stat(filepath.Join(folder, ".monban-manifest.enc")); err != nil {
+		t.Error("manifest should be preserved")
+	}
+	if _, err := os.Stat(filepath.Join(folder, ".monban-journal.json")); err != nil {
+		t.Error("journal should be preserved")
+	}
+
+	// Partial plaintext should be gone
+	if _, err := os.Stat(filepath.Join(folder, "partial1.txt")); !os.IsNotExist(err) {
+		t.Error("partial1.txt should be removed")
+	}
+	if _, err := os.Stat(filepath.Join(folder, "subdir", "partial2.txt")); !os.IsNotExist(err) {
+		t.Error("partial2.txt should be removed")
+	}
+}

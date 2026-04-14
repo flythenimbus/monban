@@ -293,7 +293,7 @@ func authenticate() error {
 			continue
 		}
 		cdh := sha256.Sum256(hmacSalt)
-		if err := monban.VerifyAssertion(pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err == nil {
+		if err := monban.VerifyAssertion(sc.RpID, pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err == nil {
 			verified = true
 			break
 		}

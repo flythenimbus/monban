@@ -219,7 +219,7 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {
-		return nil // not registered yet
+		return fmt.Errorf("loading secure config: %w", err)
 	}
 
 	prevForceAuth := sc.ForceAuthentication
@@ -335,14 +335,26 @@ func (a *App) Register(pin string, label string) error {
 	var sc *monban.SecureConfig
 	var hmacSalt []byte
 	var masterSecret []byte
+	isFirstReg := !monban.SecureConfigExists()
 
-	if monban.SecureConfigExists() {
+	if !isFirstReg {
 		sc, hmacSalt, masterSecret, err = a.prepareAdditionalKey()
 	} else {
 		sc, hmacSalt, masterSecret, err = a.prepareFirstRegistration()
 	}
 	if err != nil {
 		return err
+	}
+
+	// For first registration, zero the new master secret on any error path.
+	// On success it gets assigned to a.masterSecret (cleared on Lock).
+	registered := false
+	if isFirstReg {
+		defer func() {
+			if !registered {
+				monban.ZeroBytes(masterSecret)
+			}
+		}()
 	}
 
 	// Assert immediately to get hmac-secret for key wrapping
@@ -357,7 +369,7 @@ func (a *App) Register(pin string, label string) error {
 
 	// Verify the assertion signature
 	cdh := sha256.Sum256(hmacSalt)
-	if err := monban.VerifyAssertion(cred.PubX, cred.PubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
+	if err := monban.VerifyAssertion(sc.RpID, cred.PubX, cred.PubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
 		return fmt.Errorf("assertion verification failed: %w", err)
 	}
 
@@ -397,6 +409,7 @@ func (a *App) Register(pin string, label string) error {
 	a.masterSecret = masterSecret
 	a.encKey = encKey
 	a.locked = false
+	registered = true
 
 	monban.LockConfigDir()
 
@@ -480,7 +493,7 @@ func (a *App) Unlock(pin string) error {
 		return fmt.Errorf("decoding public key Y: %w", err)
 	}
 	cdh := sha256.Sum256(hmacSalt)
-	if err := monban.VerifyAssertion(pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
+	if err := monban.VerifyAssertion(sc.RpID, pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
 		return fmt.Errorf("assertion verification failed: %w", err)
 	}
 
@@ -1109,7 +1122,7 @@ func (a *App) fidoReauth(pin string) ([]byte, error) {
 		return nil, fmt.Errorf("decoding public key Y: %w", err)
 	}
 	cdh := sha256.Sum256(hmacSalt)
-	if err := monban.VerifyAssertion(pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
+	if err := monban.VerifyAssertion(sc.RpID, pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
 		monban.ZeroBytes(masterSecret)
 		return nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
