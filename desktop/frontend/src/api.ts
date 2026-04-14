@@ -25,20 +25,16 @@ export const api = {
 	listKeys: (): Promise<KeyInfo[]> =>
 		App.ListKeys() as unknown as Promise<KeyInfo[]>,
 
-	removeKey: (credentialId: string): Promise<void> =>
-		App.RemoveKey(credentialId),
+	removeKey: (credentialId: string, pin: string): Promise<void> =>
+		App.RemoveKey(credentialId, pin),
 
 	checkDiskSpace: (path: string): Promise<DiskSpaceInfo> =>
 		App.CheckDiskSpace(path) as unknown as Promise<DiskSpaceInfo>,
 
-	addPath: (path: string): Promise<void> => App.AddPath(path),
+	addPath: (path: string, pin: string): Promise<void> => App.AddPath(path, pin),
 
-	addFolder: (path: string): Promise<void> => App.AddFolder(path),
-
-	addFile: (path: string): Promise<void> => App.AddFile(path),
-
-	removeFolder: (vaultPath: string): Promise<void> =>
-		App.RemoveFolder(vaultPath),
+	removeFolder: (vaultPath: string, pin: string): Promise<void> =>
+		App.RemoveFolder(vaultPath, pin),
 
 	decryptLazyVault: (path: string, pin: string): Promise<void> =>
 		App.DecryptLazyVault(path, pin),
@@ -55,9 +51,10 @@ export const api = {
 	getSettings: (): Promise<Settings> =>
 		App.GetSettings() as unknown as Promise<Settings>,
 
-	updateSettings: (settings: Settings): Promise<void> =>
+	updateSettings: (settings: Settings, pin: string): Promise<void> =>
 		App.UpdateSettings(
 			settings as unknown as Parameters<typeof App.UpdateSettings>[0],
+			pin,
 		),
 
 	getSudoGateCommand: (mode: string): Promise<string> =>

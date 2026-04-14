@@ -53,7 +53,7 @@ Everything else (crypto, vault, FIDO2, config, frontend) is platform-agnostic.
 ## 4. Tech Stack
 
 ```
-Go:          1.25
+Go:          1.26
 Wails:       v3 alpha.74  (github.com/wailsapp/wails/v3)
 go-libfido2: github.com/keys-pub/go-libfido2 v1.5.3
 libfido2:    build-time dependency (brew install libfido2 / apt install libfido2-dev)
@@ -85,6 +85,22 @@ Tailwind:    v4 (@tailwindcss/vite)
   from `@wailsio/runtime`
 - **Do not use v2 imports** — they are incompatible.
 
+## 6a. Frontend Auth Pattern
+
+Every config mutation requires FIDO2 re-auth. The frontend uses a consistent
+pattern:
+
+- `PinAuth` component (`components/PinAuth.tsx`) — reusable PIN input + "touch
+  your security key..." waiting state. Props: `onSubmit(pin)`, `onCancel()`,
+  optional `label`.
+- Settings changes go through `AdminContext` pending change flow: toggle sets
+  `pendingChange`, `PinAuth` appears, `confirmPendingChange(pin)` calls the API.
+  Settings UI is disabled while a pending change is active. The toggle does NOT
+  optimistically update — it stays in the current state until PIN confirmation.
+- Vault add/remove and key remove each have their own PIN prompt state inline.
+- `util/errors.ts` maps Go error strings to friendly messages (PIN errors,
+  device errors, `rx error`, etc.).
+
 ## 7. Key Derivation
 
 ```
@@ -98,6 +114,12 @@ wrapped_key    = AES-256-GCM(key=wrappingKey, plaintext=masterSecret)
 
 // File encryption key:
 encKey         = HKDF-SHA256(ikm=masterSecret, salt=hmac_salt, info="monban-fileenc-v1")
+
+// Config authentication key (HMAC signing):
+configAuthKey  = HKDF-SHA256(ikm=masterSecret, salt=hmac_salt, info="monban-config-auth-v1")
+
+// Per-vault lazy-strict key:
+lazyStrictKey  = HKDF-SHA256(ikm=masterSecret, salt=hmac_salt, info="monban-lazy-strict-v1:<vaultPath>")
 
 // At unlock:
 assertion      → hmacSecret
@@ -118,16 +140,15 @@ permanently inaccessible.**
 - Never loads whole file into memory
 - Parallel workers (runtime.NumCPU goroutines)
 
-## 9. Config Files
+## 9. Config File
 
-Config is split into two files for security. Cryptographic material is stored
-in a root-owned system config that user-level processes cannot tamper with.
+All config is in a single HMAC-signed file. Integrity is enforced by a
+FIDO2-derived HMAC, not filesystem permissions. Every mutation (settings,
+vaults, credentials) requires a fresh FIDO2 assertion (PIN + touch).
 
-### Secure config (root-owned)
+### Location
 
-Location: `/Library/Application Support/monban/credentials.json` (macOS)
-         `/etc/monban/credentials.json` (Linux)
-Mode: `root:wheel 0644` (world-readable, root-writable)
+`~/.config/monban/credentials.json` (mode 0600)
 
 ```jsonc
 {
@@ -143,40 +164,47 @@ Mode: `root:wheel 0644` (world-readable, root-writable)
     }
   ],
   "force_authentication": true,
-  "sudo_gate": "off"
-}
-```
-
-Written via OS-specific root escalation (osascript on macOS, pkexec on Linux).
-Changes on key registration/removal and security setting toggles.
-
-### User config (user-owned)
-
-Location: `~/.config/monban/config.json` (mode 0600)
-
-```jsonc
-{
+  "sudo_gate": "off",
   "vaults": [
-    {
-      "label": "Documents",
-      "path": "/home/alice/Documents"
-    },
-    {
-      "label": "secret.txt",
-      "path": "/home/alice/secret.txt",
-      "type": "file"
-    }
+    { "label": "Documents", "path": "/home/alice/Documents" },
+    { "label": "secret.txt", "path": "/home/alice/secret.txt", "type": "file" }
   ],
-  "settings": {
-    "open_on_startup": true
-  }
+  "vault_decrypt_modes": { "/home/alice/Documents": "lazy" },
+  "open_on_startup": true,
+  "config_counter": 42,
+  "config_hmac": "<base64url>"
 }
 ```
 
-A malicious user-level process can edit this file, but the worst outcome is
-losing the vault list (annoying but recoverable — encrypted files remain on
-disk). Credentials, crypto material, and security settings (force_authentication,
-sudo_gate) in the secure config are untouchable without root.
+### HMAC tamper detection
+
+`config_hmac` is HMAC-SHA256 over a canonical representation of all protected
+fields (credentials, policy settings, vaults, decrypt modes, counter,
+open_on_startup). Derived via `configAuthKey = HKDF(masterSecret, hmacSalt,
+"monban-config-auth-v1")`. Verified on every unlock — tampered configs are
+rejected.
+
+### Rollback detection
+
+`config_counter` is a monotonic counter incremented on every signed write.
+An encrypted copy is stored at `~/.config/monban/counter.enc` (AES-256-GCM
+with `encKey`). On unlock, if the config counter is behind the encrypted
+counter, a rollback is detected. The user is warned but unlock proceeds
+(they already proved FIDO2 possession). The counter is healed.
+
+### Config directory locking
+
+While the app is unlocked, `~/.config/monban/` is `chmod 0500` (no write).
+This prevents any user-level process from deleting `counter.enc` or
+`credentials.json`. The app temporarily restores `0700` when it needs to
+write, then re-locks. If `counter.enc` is deleted while unlocked, the
+device watcher detects it within 2 seconds and triggers an immediate lock.
+
+### FIDO2 re-auth for all mutations
+
+Every config write requires a fresh FIDO2 assertion (PIN + physical touch):
+settings changes, vault add/remove, key add/remove, decrypt mode changes.
+No mutation uses the in-memory master secret alone.
 
 ## 9a. Sudo Gate (PAM Integration)
 
@@ -188,7 +216,8 @@ Modes:
 - **strict** — `auth required` on both sudo and su — YubiKey must succeed, no password fallback. Also gates `/etc/pam.d/su` to prevent root user activation bypass.
 
 Components:
-- `cmd/pam-helper/` — standalone binary invoked by PAM, reads secure config,
+- `cmd/pam-helper/` — standalone binary invoked by PAM, resolves invoking
+  user's home via `PAM_USER`/`SUDO_USER` + `user.Lookup()`, reads secure config,
   prompts for PIN via `/dev/tty`, performs FIDO2 assertion + signature verification
 - `internal/monban/pam.go` — PAM line install/removal with root escalation
 - `pam_darwin.go` / `pam_linux.go` — OS-specific privilege escalation

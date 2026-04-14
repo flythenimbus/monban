@@ -250,3 +250,40 @@ func TestDeriveLazyStrictKeyDiffersFromWrappingKey(t *testing.T) {
 		t.Error("lazy strict key should differ from wrapping key")
 	}
 }
+
+func TestDeriveConfigAuthKeyDeterministic(t *testing.T) {
+	master := bytes.Repeat([]byte{0x33}, 64)
+	salt := bytes.Repeat([]byte{0x44}, 32)
+
+	key1, err := DeriveConfigAuthKey(master, salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key2, err := DeriveConfigAuthKey(master, salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(key1, key2) {
+		t.Error("same inputs should produce same key")
+	}
+	if len(key1) != 32 {
+		t.Errorf("expected 32-byte key, got %d", len(key1))
+	}
+}
+
+func TestDeriveConfigAuthKeyDiffersFromOtherKeys(t *testing.T) {
+	ikm := bytes.Repeat([]byte{0xFF}, 64)
+	salt := bytes.Repeat([]byte{0x00}, 32)
+
+	authKey, _ := DeriveConfigAuthKey(ikm, salt)
+	encKey, _ := DeriveEncryptionKey(ikm, salt)
+	wrappingKey, _ := DeriveWrappingKey(ikm[:32], salt)
+
+	if bytes.Equal(authKey, encKey) {
+		t.Error("config auth key should differ from encryption key")
+	}
+	if bytes.Equal(authKey, wrappingKey) {
+		t.Error("config auth key should differ from wrapping key")
+	}
+}

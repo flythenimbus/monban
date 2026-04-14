@@ -18,6 +18,10 @@ const errorMap: [RegExp, string][] = [
 	[/user presence required/i, "Touch your security key to confirm"],
 	[/operation denied/i, "Operation was denied. Please try again."],
 	[/action timeout/i, "Timed out waiting for security key. Please try again."],
+	[
+		/rx error/i,
+		"No response from security key. Make sure it's plugged in and try again.",
+	],
 	[/no credentials/i, "Unauthorized key"],
 	[
 		/does not support hmac-secret/i,

@@ -1,11 +1,17 @@
 package monban
 
 import (
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
 type DecryptMode string
@@ -25,8 +31,9 @@ type CredentialEntry struct {
 	WrappedKey   string `json:"wrapped_key"`   // base64url: nonce || AES-GCM(wrappingKey, masterSecret)
 }
 
-// SecureConfig is the root-owned config containing cryptographic material
-// and security-sensitive settings. Writable only by root.
+// SecureConfig is the HMAC-signed config containing cryptographic material,
+// security settings, and the vault list. All fields are protected by a
+// FIDO2-derived HMAC — tampering is detected on unlock.
 type SecureConfig struct {
 	RpID                string                 `json:"rp_id"`
 	HmacSalt            string                 `json:"hmac_salt"` // base64url, 32 bytes, immutable after init
@@ -34,6 +41,10 @@ type SecureConfig struct {
 	ForceAuthentication bool                   `json:"force_authentication"`
 	SudoGate            string                 `json:"sudo_gate"` // "off" (default), "default" (sufficient), "strict" (required)
 	VaultDecryptModes   map[string]DecryptMode `json:"vault_decrypt_modes,omitempty"`
+	ConfigHMAC          string                 `json:"config_hmac,omitempty"` // base64url HMAC-SHA256 over protected fields
+	ConfigCounter       uint64                 `json:"config_counter"`       // monotonic counter, incremented on every signed write
+	Vaults              []VaultEntry           `json:"vaults"`
+	OpenOnStartup       bool                   `json:"open_on_startup"`
 }
 
 // VaultEntry describes a protected folder or file.
@@ -48,87 +59,17 @@ func (v VaultEntry) IsFile() bool {
 	return v.Type == "file"
 }
 
-// Settings holds non-sensitive user preferences.
-type Settings struct {
-	OpenOnStartup bool `json:"open_on_startup"`
-}
+// --- Config directory (user-owned, ~/.config/monban/) ---
 
-// Config is the user-owned config containing settings and vault list.
-// Stored in the user's home directory.
-type Config struct {
-	Vaults   []VaultEntry `json:"vaults"`
-	Settings Settings     `json:"settings"`
-}
-
-// --- User config (user-owned, ~/.config/monban/config.json) ---
-
-// ConfigDir and ConfigPath are variables so tests can override them.
+// ConfigDir is a variable so tests can override it.
 var ConfigDir = func() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "monban")
 }
 
-var ConfigPath = func() string {
-	return filepath.Join(ConfigDir(), "config.json")
-}
-
-func LoadConfig() (*Config, error) {
-	return LoadConfigFrom(ConfigPath())
-}
-
-// LoadConfigFrom loads user config from an arbitrary path.
-func LoadConfigFrom(path string) (*Config, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, fmt.Errorf("config not found: %w", err)
-	}
-
-	if info.Mode().Perm()&0077 != 0 {
-		return nil, fmt.Errorf("config file permissions too open: %s (want 0600)", info.Mode().Perm())
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading config: %w", err)
-	}
-
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing config: %w", err)
-	}
-
-	return &cfg, nil
-}
-
-func SaveConfig(cfg *Config) error {
-	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshalling config: %w", err)
-	}
-
-	path := ConfigPath()
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("writing config: %w", err)
-	}
-
-	return nil
-}
-
-func ConfigExists() bool {
-	_, err := os.Stat(ConfigPath())
-	return err == nil
-}
-
-// --- Secure config (root-owned, /Library/Application Support/monban/ or /etc/monban/) ---
-
-// SecureConfigDir returns the platform-specific system directory for the secure config.
+// SecureConfigDir and SecureConfigPath are variables so tests can override them.
 var SecureConfigDir = func() string {
-	return secureConfigDir()
+	return ConfigDir()
 }
 
 var SecureConfigPath = func() string {
@@ -140,7 +81,6 @@ func LoadSecureConfig() (*SecureConfig, error) {
 }
 
 // LoadSecureConfigFrom loads the secure config from an arbitrary path.
-// The secure config is root-owned but world-readable (0644).
 func LoadSecureConfigFrom(path string) (*SecureConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -164,20 +104,142 @@ func MarshalSecureConfig(sc *SecureConfig) ([]byte, error) {
 	return data, nil
 }
 
-// SaveSecureConfig writes the secure config via root escalation.
+// SaveSecureConfig writes the secure config directly. The config is protected
+// by HMAC (FIDO2-derived), not filesystem permissions. Temporarily unlocks the
+// config directory for writing if it is locked.
 func SaveSecureConfig(sc *SecureConfig) error {
+	dir := SecureConfigDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+
 	data, err := MarshalSecureConfig(sc)
 	if err != nil {
 		return err
 	}
 
-	return BatchPrivilegedWrites([]PrivilegedWrite{{
-		Path:      SecureConfigPath(),
-		Content:   string(data),
-		Mode:      0644,
-		MkdirPath: SecureConfigDir(),
-	}})
+	// Temporarily allow writes if directory is locked
+	unlocked := unlockConfigDir()
+
+	path := SecureConfigPath()
+	writeErr := os.WriteFile(path, data, 0600)
+
+	if unlocked {
+		LockConfigDir()
+	}
+
+	if writeErr != nil {
+		return fmt.Errorf("writing secure config: %w", writeErr)
+	}
+	return nil
 }
+
+// LockConfigDir removes write permission on the config directory, preventing
+// file creation or deletion by any user-level process. Call while the app is
+// unlocked to protect counter.enc and credentials.json from tampering.
+func LockConfigDir() {
+	_ = os.Chmod(SecureConfigDir(), 0500)
+}
+
+// UnlockConfigDir restores write permission on the config directory.
+// Call before locking the app or when the app shuts down.
+func UnlockConfigDir() {
+	_ = os.Chmod(SecureConfigDir(), 0700)
+}
+
+// unlockConfigDir temporarily restores write permission if the directory is
+// currently locked. Returns true if it was locked (caller should re-lock).
+func unlockConfigDir() bool {
+	info, err := os.Stat(SecureConfigDir())
+	if err != nil {
+		return false
+	}
+	if info.Mode().Perm()&0200 == 0 {
+		_ = os.Chmod(SecureConfigDir(), 0700)
+		return true
+	}
+	return false
+}
+
+// counterPath returns the path to the encrypted counter file.
+func counterPath() string {
+	return filepath.Join(SecureConfigDir(), "counter.enc")
+}
+
+// SaveCounter encrypts the counter value and writes it to counter.enc.
+// Uses the file encryption key (derived from master secret via FIDO2).
+func SaveCounter(encKey []byte, counter uint64) error {
+	plaintext := make([]byte, 8)
+	binary.BigEndian.PutUint64(plaintext, counter)
+
+	gcm, err := newGCM(encKey)
+	if err != nil {
+		return err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("generating counter nonce: %w", err)
+	}
+
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+
+	// Write nonce || ciphertext+tag
+	out := make([]byte, len(nonce)+len(ciphertext))
+	copy(out, nonce)
+	copy(out[len(nonce):], ciphertext)
+
+	unlocked := unlockConfigDir()
+	writeErr := os.WriteFile(counterPath(), out, 0600)
+	if unlocked {
+		LockConfigDir()
+	}
+	if writeErr != nil {
+		return fmt.Errorf("writing counter: %w", writeErr)
+	}
+	return nil
+}
+
+// LoadCounter decrypts counter.enc and returns the stored counter value.
+// Returns 0 if the file doesn't exist (first run).
+func LoadCounter(encKey []byte) (uint64, error) {
+	data, err := os.ReadFile(counterPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading counter: %w", err)
+	}
+
+	gcm, err := newGCM(encKey)
+	if err != nil {
+		return 0, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return 0, fmt.Errorf("counter file too short")
+	}
+
+	plaintext, err := gcm.Open(nil, data[:nonceSize], data[nonceSize:], nil)
+	if err != nil {
+		return 0, fmt.Errorf("decrypting counter (wrong key or corrupted): %w", err)
+	}
+
+	if len(plaintext) != 8 {
+		return 0, fmt.Errorf("counter data invalid length: %d", len(plaintext))
+	}
+
+	return binary.BigEndian.Uint64(plaintext), nil
+}
+
+// CounterFileExists returns true if counter.enc is present on disk.
+func CounterFileExists() bool {
+	_, err := os.Stat(counterPath())
+	return err == nil
+}
+
+var ErrConfigRollback = fmt.Errorf("secure config counter is behind the encrypted counter — possible rollback attack")
 
 // VaultDecryptMode returns the current decrypt mode. If empty, returns `"eager"`.
 func (sc *SecureConfig) VaultDecryptMode(path string) DecryptMode {
@@ -192,70 +254,107 @@ func SecureConfigExists() bool {
 	return err == nil
 }
 
-// --- Migration ---
+// --- Config HMAC (tamper detection) ---
 
-// legacyConfig mirrors the old config.json layout that included credential fields.
-type legacyConfig struct {
-	RpID        string            `json:"rp_id"`
-	HmacSalt    string            `json:"hmac_salt"`
-	Credentials []CredentialEntry `json:"credentials"`
-	Vaults      []VaultEntry      `json:"vaults"`
-	Settings    struct {
-		OpenOnStartup       bool `json:"open_on_startup"`
-		ForceAuthentication bool `json:"force_authentication"`
-	} `json:"settings"`
-}
+// configHMACPayload builds a canonical string from the protected fields of the
+// secure config. The output is deterministic regardless of JSON serialisation order.
+func configHMACPayload(sc *SecureConfig) string {
+	var b strings.Builder
 
-// MigrateConfigIfNeeded checks if config.json contains legacy credential fields
-// and migrates them to the secure config (credentials.json). This is a one-time
-// migration from the old single-file layout to the split layout.
-// Returns true if migration was performed.
-func MigrateConfigIfNeeded() (bool, error) {
-	if SecureConfigExists() {
-		return false, nil
+	// Identity fields (immutable but must not be swapped)
+	fmt.Fprintf(&b, "rp_id:%s\n", sc.RpID)
+	fmt.Fprintf(&b, "hmac_salt:%s\n", sc.HmacSalt)
+
+	// Credentials: sorted by credential_id for determinism
+	creds := make([]CredentialEntry, len(sc.Credentials))
+	copy(creds, sc.Credentials)
+	sort.Slice(creds, func(i, j int) bool {
+		return creds[i].CredentialID < creds[j].CredentialID
+	})
+	for _, c := range creds {
+		fmt.Fprintf(&b, "cred:%s:%s:%s:%s:%s\n", c.Label, c.CredentialID, c.PublicKeyX, c.PublicKeyY, c.WrappedKey)
 	}
 
-	path := ConfigPath()
-	data, err := os.ReadFile(path)
+	// Policy fields
+	fmt.Fprintf(&b, "force_authentication:%v\n", sc.ForceAuthentication)
+	fmt.Fprintf(&b, "sudo_gate:%s\n", sc.SudoGate)
+
+	// Vault decrypt modes: sorted by path
+	if len(sc.VaultDecryptModes) > 0 {
+		paths := make([]string, 0, len(sc.VaultDecryptModes))
+		for p := range sc.VaultDecryptModes {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		for _, p := range paths {
+			fmt.Fprintf(&b, "vault_mode:%s:%s\n", p, sc.VaultDecryptModes[p])
+		}
+	}
+
+	// Vaults: sorted by path for determinism
+	vaults := make([]VaultEntry, len(sc.Vaults))
+	copy(vaults, sc.Vaults)
+	sort.Slice(vaults, func(i, j int) bool { return vaults[i].Path < vaults[j].Path })
+	for _, v := range vaults {
+		fmt.Fprintf(&b, "vault:%s:%s:%s\n", v.Label, v.Path, v.Type)
+	}
+
+	fmt.Fprintf(&b, "open_on_startup:%v\n", sc.OpenOnStartup)
+	fmt.Fprintf(&b, "config_counter:%d\n", sc.ConfigCounter)
+
+	return b.String()
+}
+
+// SignSecureConfig computes the HMAC-SHA256 over the protected fields and stores
+// it in the ConfigHMAC field. Requires the master secret (FIDO2 must be unlocked).
+func SignSecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
+	authKey, err := DeriveConfigAuthKey(masterSecret, hmacSalt)
 	if err != nil {
-		return false, nil // no config at all, nothing to migrate
+		return err
 	}
+	defer ZeroBytes(authKey)
 
-	var legacy legacyConfig
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return false, nil
-	}
-
-	// Check if legacy fields are present
-	if legacy.HmacSalt == "" || len(legacy.Credentials) == 0 {
-		return false, nil
-	}
-
-	// Build secure config from legacy fields
-	sc := &SecureConfig{
-		RpID:                legacy.RpID,
-		HmacSalt:            legacy.HmacSalt,
-		Credentials:         legacy.Credentials,
-		ForceAuthentication: legacy.Settings.ForceAuthentication,
-	}
-
-	if err := SaveSecureConfig(sc); err != nil {
-		return false, fmt.Errorf("migrating credentials to secure config: %w", err)
-	}
-
-	// Rewrite config.json without credential fields
-	cfg := &Config{
-		Vaults: legacy.Vaults,
-		Settings: Settings{
-			OpenOnStartup: legacy.Settings.OpenOnStartup,
-		},
-	}
-	if err := SaveConfig(cfg); err != nil {
-		return false, fmt.Errorf("rewriting config after migration: %w", err)
-	}
-
-	return true, nil
+	payload := configHMACPayload(sc)
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write([]byte(payload))
+	sc.ConfigHMAC = EncodeB64(mac.Sum(nil))
+	return nil
 }
+
+// VerifySecureConfig checks whether the config HMAC is valid. Returns nil if
+// the HMAC matches, ErrConfigTampered if it doesn't, or ErrConfigUnsigned if
+// no HMAC is present (first launch after upgrade).
+func VerifySecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
+	if sc.ConfigHMAC == "" {
+		return ErrConfigUnsigned
+	}
+
+	authKey, err := DeriveConfigAuthKey(masterSecret, hmacSalt)
+	if err != nil {
+		return err
+	}
+	defer ZeroBytes(authKey)
+
+	stored, err := DecodeB64(sc.ConfigHMAC)
+	if err != nil {
+		return ErrConfigTampered
+	}
+
+	payload := configHMACPayload(sc)
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write([]byte(payload))
+	expected := mac.Sum(nil)
+
+	if !hmac.Equal(stored, expected) {
+		return ErrConfigTampered
+	}
+	return nil
+}
+
+var (
+	ErrConfigTampered = fmt.Errorf("secure config HMAC verification failed: config may have been tampered with")
+	ErrConfigUnsigned = fmt.Errorf("secure config has no HMAC signature (will be signed on next save)")
+)
 
 // --- Helpers ---
 

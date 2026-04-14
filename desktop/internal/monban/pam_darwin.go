@@ -14,9 +14,6 @@ func pamSuPath() string {
 	return "/etc/pam.d/su"
 }
 
-func secureConfigDir() string {
-	return "/Library/Application Support/monban"
-}
 
 // RunWithPrivileges executes a shell command with root privileges using
 // osascript to present a native macOS authorization dialog.

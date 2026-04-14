@@ -5,7 +5,15 @@ import { AboutTab } from "./tabs/AboutTab";
 import { GeneralTab } from "./tabs/GeneralTab";
 import { KeysTab } from "./tabs/KeysTab";
 
-function AdminPanelInner() {
+interface AdminPanelProps {
+	rollbackWarning?: boolean;
+	onDismissRollback?: () => void;
+}
+
+function AdminPanelInner({
+	rollbackWarning,
+	onDismissRollback,
+}: AdminPanelProps) {
 	const contentRef = useAutoResize();
 	const { error, setError } = useAdmin();
 
@@ -17,6 +25,15 @@ function AdminPanelInner() {
 					Unlocked
 				</span>
 			</div>
+
+			{rollbackWarning && (
+				<div className="mb-4">
+					<Alert onDismiss={onDismissRollback}>
+						Config rollback detected — your settings may have been restored from
+						a backup or tampered with. Please verify your settings below.
+					</Alert>
+				</div>
+			)}
 
 			{error && (
 				<div className="mb-4">
@@ -47,10 +64,16 @@ function AdminPanelInner() {
 	);
 }
 
-export function AdminPanel() {
+export function AdminPanel({
+	rollbackWarning,
+	onDismissRollback,
+}: AdminPanelProps) {
 	return (
 		<AdminProvider>
-			<AdminPanelInner />
+			<AdminPanelInner
+				rollbackWarning={rollbackWarning}
+				onDismissRollback={onDismissRollback}
+			/>
 		</AdminProvider>
 	);
 }

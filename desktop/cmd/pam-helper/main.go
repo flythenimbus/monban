@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -204,8 +205,32 @@ func removePamTag(path string) {
 }
 
 
+// resolveUserConfigDir determines the invoking user's config directory.
+// When running as root via PAM, os.UserHomeDir() returns /var/root.
+// We use PAM_USER or SUDO_USER to find the real user's home.
+func resolveUserConfigDir() error {
+	username := os.Getenv("PAM_USER")
+	if username == "" {
+		username = os.Getenv("SUDO_USER")
+	}
+	if username == "" {
+		return fmt.Errorf("cannot determine invoking user (PAM_USER and SUDO_USER unset)")
+	}
+	u, err := user.Lookup(username)
+	if err != nil {
+		return fmt.Errorf("looking up user %s: %w", username, err)
+	}
+	dir := filepath.Join(u.HomeDir, ".config", "monban")
+	monban.ConfigDir = func() string { return dir }
+	return nil
+}
+
 func authenticate() error {
-	// Load the system-level secure config (root-owned, world-readable).
+	// Resolve the invoking user's config directory (not root's).
+	if err := resolveUserConfigDir(); err != nil {
+		return err
+	}
+
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return fmt.Errorf("loading secure config: %w", err)
