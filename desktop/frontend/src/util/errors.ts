@@ -61,6 +61,10 @@ const errorMap: [RegExp, string][] = [
 		/no such file or directory/i,
 		"Path not found. Please check the path and try again.",
 	],
+	[
+		/integrity check failed|possible tampering/i,
+		"Configuration has been tampered with. Restore a backup of your config to recover your vaults.",
+	],
 ];
 
 export function friendlyError(err: unknown): string {

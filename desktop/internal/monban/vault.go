@@ -152,8 +152,10 @@ func RecoverFromJournal(folderPath string) error {
 	case "unlock":
 		switch journal.State {
 		case "decrypting":
-			// Encrypted data intact, partial decrypts may exist
-			// User should re-trigger unlock
+			// Encrypted data is intact in .monban-data/. Remove any
+			// partially-decrypted plaintext files so the vault is left
+			// in a clean locked state for the user to re-trigger unlock.
+			removePartialDecrypts(folderPath)
 		case "removing-encrypted":
 			// Decrypted files written, resume cleanup
 			removeEncryptedData(folderPath)
@@ -309,8 +311,9 @@ func RecoverFileFromJournal(filePath string) error {
 	case "unlock":
 		switch journal.State {
 		case "decrypting":
-			// Encrypted data intact, partial decrypt may exist
-			// User should re-trigger unlock
+			// Encrypted data intact in vault dir. Remove the partially
+			// decrypted file so the vault stays in a clean locked state.
+			_ = os.Remove(filePath)
 		case "removing-encrypted":
 			// Decrypted file written, resume cleanup
 			_ = os.RemoveAll(vaultDir)
@@ -425,11 +428,34 @@ func removeJournal(folderPath string) {
 }
 
 // collectFiles walks a directory and returns metadata for every non-monban file.
+// Symlinks are rejected to prevent symlink-based attacks (exfiltration, arbitrary
+// file overwrite on decrypt).
 func collectFiles(root string) ([]fileInfo, error) {
 	var files []fileInfo
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+		// Reject symlinks — a symlink inside a vault could point outside it,
+		// allowing an attacker to exfiltrate or overwrite arbitrary files.
+		if info.Mode()&os.ModeSymlink != 0 {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Double-check with Lstat for Walk's implicit dereference
+		if path != root {
+			linfo, lerr := os.Lstat(path)
+			if lerr != nil {
+				return lerr
+			}
+			if linfo.Mode()&os.ModeSymlink != 0 {
+				if linfo.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 		// Skip .monban-data directory entirely
 		if info.IsDir() && info.Name() == ".monban-data" {
@@ -555,7 +581,16 @@ func cleanupStaleEncFiles(current *Manifest, prev map[string]ManifestEntry, fold
 }
 
 // decryptFilesInPlace decrypts files from .monban-data/ back to their original paths.
+// Manifest paths are validated to prevent path traversal attacks.
 func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) error {
+	// Pre-validate all manifest paths before any decryption
+	cleanRoot := filepath.Clean(folderPath)
+	for _, e := range manifest.Files {
+		if err := validateManifestPath(e.Path, cleanRoot); err != nil {
+			return fmt.Errorf("unsafe manifest entry %q: %w", e.Path, err)
+		}
+	}
+
 	var decErr atomic.Value
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
@@ -572,7 +607,7 @@ func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) e
 			}
 
 			encPath := filepath.Join(dataDir(folderPath), e.EncName)
-			dstPath := filepath.Join(folderPath, e.Path)
+			dstPath := filepath.Join(cleanRoot, e.Path)
 
 			if err := os.MkdirAll(filepath.Dir(dstPath), 0700); err != nil {
 				decErr.Store(fmt.Errorf("creating dir for %s: %w", e.Path, err))
@@ -596,46 +631,57 @@ func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) e
 	return nil
 }
 
-// writeEncryptedManifest serializes the manifest to JSON, then encrypts it.
+// validateManifestPath checks that a manifest entry path is safe: no absolute
+// paths, no ".." traversal, and the resolved path stays within the vault root.
+func validateManifestPath(relPath string, cleanRoot string) error {
+	if filepath.IsAbs(relPath) {
+		return fmt.Errorf("absolute path not allowed")
+	}
+	if strings.Contains(relPath, "..") {
+		return fmt.Errorf("path traversal not allowed")
+	}
+	resolved := filepath.Join(cleanRoot, relPath)
+	if !strings.HasPrefix(filepath.Clean(resolved), cleanRoot+string(filepath.Separator)) &&
+		filepath.Clean(resolved) != cleanRoot {
+		return fmt.Errorf("path escapes vault root")
+	}
+	return nil
+}
+
+// writeEncryptedManifest serializes the manifest to JSON and encrypts it in memory.
+// No plaintext is ever written to disk.
 func writeEncryptedManifest(encKey []byte, folderPath string, manifest *Manifest) error {
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshalling manifest: %w", err)
 	}
 
-	// Write plaintext to temp, encrypt to .enc, remove temp
-	tmpPath := manifestPath(folderPath) + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return fmt.Errorf("writing temp manifest: %w", err)
-	}
-
-	if err := EncryptFile(encKey, tmpPath, manifestPath(folderPath)); err != nil {
-		_ = os.Remove(tmpPath)
+	encrypted, err := EncryptBytes(encKey, data)
+	if err != nil {
 		return fmt.Errorf("encrypting manifest: %w", err)
 	}
 
-	_ = os.Remove(tmpPath)
+	if err := os.WriteFile(manifestPath(folderPath), encrypted, 0600); err != nil {
+		return fmt.Errorf("writing encrypted manifest: %w", err)
+	}
 	return nil
 }
 
-// loadEncryptedManifest decrypts and parses the manifest.
+// loadEncryptedManifest reads and decrypts the manifest in memory.
 // If encKey is nil, returns an error (used during recovery when key is unavailable).
 func loadEncryptedManifest(encKey []byte, folderPath string) (*Manifest, error) {
 	if encKey == nil {
 		return nil, fmt.Errorf("no encryption key available")
 	}
 
-	encPath := manifestPath(folderPath)
-	tmpPath := encPath + ".tmp"
-
-	if err := DecryptFile(encKey, encPath, tmpPath); err != nil {
-		return nil, fmt.Errorf("decrypting manifest: %w", err)
+	encrypted, err := os.ReadFile(manifestPath(folderPath))
+	if err != nil {
+		return nil, fmt.Errorf("reading encrypted manifest: %w", err)
 	}
 
-	data, err := os.ReadFile(tmpPath)
-	_ = os.Remove(tmpPath)
+	data, err := DecryptBytes(encKey, encrypted)
 	if err != nil {
-		return nil, fmt.Errorf("reading manifest: %w", err)
+		return nil, fmt.Errorf("decrypting manifest: %w", err)
 	}
 
 	var manifest Manifest
@@ -654,6 +700,32 @@ func removeOriginals(files []fileInfo, folderPath string) {
 
 func removeEncryptedData(folderPath string) {
 	_ = os.RemoveAll(dataDir(folderPath))
+}
+
+// removePartialDecrypts removes any non-monban files from a vault folder.
+// Used during crash recovery when unlock was interrupted mid-decryption:
+// encrypted data in .monban-data/ is still intact, but partial plaintext
+// files may have been written. Removing them leaves the vault in a clean
+// locked state so the user can re-trigger unlock.
+func removePartialDecrypts(folderPath string) {
+	_ = filepath.Walk(folderPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && info.Name() == ".monban-data" {
+			return filepath.SkipDir
+		}
+		if info.IsDir() {
+			return nil
+		}
+		name := info.Name()
+		if name == ".monban-journal.json" || name == ".monban-manifest.enc" {
+			return nil
+		}
+		_ = os.Remove(path)
+		return nil
+	})
+	removeEmptyDirs(folderPath)
 }
 
 func hashedEncName(relPath string) string {

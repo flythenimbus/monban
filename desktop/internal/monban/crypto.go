@@ -19,6 +19,8 @@ const (
 // Format: [12-byte file nonce] [4-byte chunk size (big endian)] [chunk1] [chunk2] ...
 // Each chunk: [ciphertext + 16-byte GCM tag]
 // Chunk nonce is derived: fileNonce XOR chunkIndex (as 12-byte big endian).
+// The first chunk uses the file header as GCM additional authenticated data (AAD)
+// to bind the header to the ciphertext and prevent header tampering.
 func EncryptFile(key []byte, srcPath, dstPath string) error {
 	src, err := os.Open(srcPath)
 	if err != nil {
@@ -58,7 +60,12 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 		n, readErr := io.ReadFull(src, buf)
 		if n > 0 {
 			chunkNonce := deriveChunkNonce(fileNonce, chunkIdx)
-			encrypted := gcm.Seal(nil, chunkNonce, buf[:n], nil)
+			// First chunk authenticates the header via AAD
+			var aad []byte
+			if chunkIdx == 0 {
+				aad = header
+			}
+			encrypted := gcm.Seal(nil, chunkNonce, buf[:n], aad)
 			if _, err := dst.Write(encrypted); err != nil {
 				return fmt.Errorf("writing chunk %d: %w", chunkIdx, err)
 			}
@@ -116,7 +123,12 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 		n, readErr := io.ReadFull(src, buf)
 		if n > 0 {
 			chunkNonce := deriveChunkNonce(fileNonce, chunkIdx)
-			plaintext, err := gcm.Open(nil, chunkNonce, buf[:n], nil)
+			// First chunk was authenticated with header as AAD
+			var aad []byte
+			if chunkIdx == 0 {
+				aad = header
+			}
+			plaintext, err := gcm.Open(nil, chunkNonce, buf[:n], aad)
 			if err != nil {
 				return fmt.Errorf("decrypting chunk %d: %w", chunkIdx, err)
 			}

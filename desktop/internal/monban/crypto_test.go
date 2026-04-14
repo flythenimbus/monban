@@ -240,3 +240,77 @@ func TestDeriveChunkNonceDoesNotMutateOriginal(t *testing.T) {
 		t.Error("deriveChunkNonce should not mutate the original nonce")
 	}
 }
+
+func TestDecryptDetectsTamperedHeader(t *testing.T) {
+	key := bytes.Repeat([]byte{0xAB}, 32)
+	plaintext := []byte("authenticated header test")
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "plain.txt")
+	enc := filepath.Join(dir, "plain.txt.enc")
+	dec := filepath.Join(dir, "plain.dec.txt")
+
+	_ = os.WriteFile(src, plaintext, 0600)
+	_ = EncryptFile(key, src, enc)
+
+	// Tamper with the chunk size field in the header (bytes 12-15)
+	data, _ := os.ReadFile(enc)
+	data[14] ^= 0xFF // flip a byte in chunk size
+	_ = os.WriteFile(enc, data, 0600)
+
+	err := DecryptFile(key, enc, dec)
+	if err == nil {
+		t.Error("decryption should fail when header is tampered (AAD mismatch)")
+	}
+}
+
+func TestDecryptDetectsTamperedNonce(t *testing.T) {
+	key := bytes.Repeat([]byte{0xCD}, 32)
+	plaintext := []byte("nonce tamper test data")
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "plain.txt")
+	enc := filepath.Join(dir, "plain.txt.enc")
+	dec := filepath.Join(dir, "plain.dec.txt")
+
+	_ = os.WriteFile(src, plaintext, 0600)
+	_ = EncryptFile(key, src, enc)
+
+	// Tamper with the nonce in the header (first 12 bytes)
+	data, _ := os.ReadFile(enc)
+	data[0] ^= 0xFF
+	_ = os.WriteFile(enc, data, 0600)
+
+	err := DecryptFile(key, enc, dec)
+	if err == nil {
+		t.Error("decryption should fail when nonce is tampered")
+	}
+}
+
+func TestHeaderSwapBetweenFiles(t *testing.T) {
+	key := bytes.Repeat([]byte{0xEF}, 32)
+
+	dir := t.TempDir()
+	src1 := filepath.Join(dir, "file1.txt")
+	src2 := filepath.Join(dir, "file2.txt")
+	enc1 := filepath.Join(dir, "file1.enc")
+	enc2 := filepath.Join(dir, "file2.enc")
+	dec := filepath.Join(dir, "dec.txt")
+
+	_ = os.WriteFile(src1, []byte("content of file 1"), 0600)
+	_ = os.WriteFile(src2, []byte("content of file 2"), 0600)
+	_ = EncryptFile(key, src1, enc1)
+	_ = EncryptFile(key, src2, enc2)
+
+	// Swap headers: put file2's header on file1's body
+	data1, _ := os.ReadFile(enc1)
+	data2, _ := os.ReadFile(enc2)
+	swapped := append(data2[:FileHeaderSize], data1[FileHeaderSize:]...)
+	swappedPath := filepath.Join(dir, "swapped.enc")
+	_ = os.WriteFile(swappedPath, swapped, 0600)
+
+	err := DecryptFile(key, swappedPath, dec)
+	if err == nil {
+		t.Error("decryption should fail when headers are swapped between files (AAD mismatch)")
+	}
+}
