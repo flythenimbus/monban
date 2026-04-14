@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../../api";
-import { Input, PinAuth } from "../../../components";
+import { Button, Input, PinAuth } from "../../../components";
 import { friendlyError } from "../../../util/errors";
 import { useAdmin } from "../AdminContext";
 
@@ -100,25 +100,19 @@ export function KeysTab() {
 						onChange={(e) => setPin(e.target.value)}
 					/>
 					<div className="flex gap-2">
-						<button
-							type="button"
-							onClick={handleAdd}
-							disabled={!pin || !label || adding}
-							className="btn-primary"
-						>
+						<Button onClick={handleAdd} disabled={!pin || !label || adding}>
 							{adding ? "Registering..." : "Register Key"}
-						</button>
-						<button
-							type="button"
+						</Button>
+						<Button
+							variant="secondary"
 							onClick={() => {
 								setShowAdd(false);
 								setPin("");
 								setLabel("");
 							}}
-							className="btn-secondary"
 						>
 							Cancel
-						</button>
+						</Button>
 					</div>
 				</div>
 			) : (

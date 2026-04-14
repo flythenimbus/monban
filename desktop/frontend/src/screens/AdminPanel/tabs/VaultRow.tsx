@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../../api";
-import { Alert, Input, Select } from "../../../components";
+import { Alert, Button, Input, Select } from "../../../components";
 import { Lock } from "../../../components/icons/Lock";
 import { Times } from "../../../components/icons/Times";
 import { Trash } from "../../../components/icons/Trash";
@@ -231,14 +231,9 @@ export function VaultRow({
 						onKeyDown={(e) => e.key === "Enter" && pin && handlePinSubmit()}
 						className="flex-1 !py-1.5 !px-2.5 !text-xs"
 					/>
-					<button
-						type="button"
-						onClick={handlePinSubmit}
-						disabled={!pin}
-						className="btn-primary w-auto! px-2.5 py-1.5 text-xs !text-xs !rounded-md"
-					>
+					<Button size="sm" onClick={handlePinSubmit} disabled={!pin}>
 						Authenticate
-					</button>
+					</Button>
 					<button
 						type="button"
 						onClick={handleCancel}

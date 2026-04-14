@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "./Button";
 import { Input } from "./Input";
 import { Times } from "./icons/Times";
 
@@ -45,14 +46,9 @@ export function PinAuth({
 						onKeyDown={(e) => e.key === "Enter" && pin && handleSubmit()}
 						className="flex-1 !py-1.5 !px-2.5 !text-xs"
 					/>
-					<button
-						type="button"
-						onClick={handleSubmit}
-						disabled={!pin}
-						className="btn-primary w-auto! px-2.5 py-1.5 text-xs !text-xs !rounded-md"
-					>
+					<Button size="sm" onClick={handleSubmit} disabled={!pin}>
 						Authenticate
-					</button>
+					</Button>
 					<button
 						type="button"
 						onClick={onCancel}

@@ -1,7 +1,7 @@
 import { Clipboard } from "@wailsio/runtime";
 import { useState } from "react";
 import { api } from "../../../api";
-import { Input, PinAuth, Select, Toggle } from "../../../components";
+import { Button, Input, PinAuth, Select, Toggle } from "../../../components";
 import type { SudoGateMode } from "../../../types";
 import { friendlyError } from "../../../util/errors";
 import { useAdmin } from "../AdminContext";
@@ -168,14 +168,14 @@ export function GeneralTab() {
 						onKeyDown={(e) => e.key === "Enter" && handleAdd()}
 						className="flex-1"
 					/>
-					<button
-						type="button"
+					<Button
 						onClick={handleAdd}
 						disabled={!inputPath || addPending}
-						className="btn-primary w-auto! px-5"
+						fullWidth={false}
+						className="px-5"
 					>
 						Add
-					</button>
+					</Button>
 				</div>
 				{addPending && (
 					<PinAuth

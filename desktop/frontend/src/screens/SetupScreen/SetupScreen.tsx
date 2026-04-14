@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
-import { Alert, GlassCard, Input, Logo, StatusText } from "../../components";
+import {
+	Alert,
+	Button,
+	GlassCard,
+	Input,
+	Logo,
+	StatusText,
+} from "../../components";
 import { useAutoResize } from "../../hooks/useAutoResize";
 import type { SetupState } from "../../types";
 import { friendlyError } from "../../util/errors";
@@ -96,14 +103,9 @@ export function SetupScreen({ onComplete }: Props) {
 									onChange={(e) => setPin(e.target.value)}
 									onKeyDown={(e) => e.key === "Enter" && handleRegister()}
 								/>
-								<button
-									type="button"
-									onClick={handleRegister}
-									disabled={!pin || !label}
-									className="btn-primary"
-								>
+								<Button onClick={handleRegister} disabled={!pin || !label}>
 									Register
-								</button>
+								</Button>
 							</>
 						)}
 					</div>
@@ -122,17 +124,16 @@ export function SetupScreen({ onComplete }: Props) {
 				{state === "error" && (
 					<div className="space-y-4">
 						<Alert>{error}</Alert>
-						<button
-							type="button"
+						<Button
+							variant="secondary"
 							onClick={() => {
 								setState("detect");
 								setError("");
 								setPin("");
 							}}
-							className="btn-secondary"
 						>
 							Try Again
-						</button>
+						</Button>
 					</div>
 				)}
 			</GlassCard>

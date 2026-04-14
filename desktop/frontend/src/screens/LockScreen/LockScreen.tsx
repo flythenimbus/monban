@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
-import { Alert, GlassCard, Input, Logo, StatusText } from "../../components";
+import {
+	Alert,
+	Button,
+	GlassCard,
+	Input,
+	Logo,
+	StatusText,
+} from "../../components";
 import { useAutoResize } from "../../hooks/useAutoResize";
 import type { LockState, Settings } from "../../types";
 import { friendlyError } from "../../util/errors";
@@ -104,16 +111,14 @@ export function LockScreen({ onUnlock }: Props) {
 							</div>
 						)}
 
-						<button
-							type="button"
+						<Button
 							onClick={handleUnlock}
 							disabled={
 								!pin || state === "waiting_touch" || state === "success"
 							}
-							className="btn-primary"
 						>
 							Authenticate
-						</button>
+						</Button>
 					</>
 				)}
 			</GlassCard>
