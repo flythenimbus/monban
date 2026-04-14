@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../../api";
-import { Input } from "../../../components";
+import { Input, PinAuth } from "../../../components";
 import { friendlyError } from "../../../util/errors";
 import { useAdmin } from "../AdminContext";
 
@@ -10,6 +10,7 @@ export function KeysTab() {
 	const [pin, setPin] = useState("");
 	const [label, setLabel] = useState("");
 	const [adding, setAdding] = useState(false);
+	const [removingCredId, setRemovingCredId] = useState<string | null>(null);
 
 	const handleAdd = async () => {
 		if (!pin || !label) return;
@@ -27,12 +28,19 @@ export function KeysTab() {
 		}
 	};
 
-	const handleRemove = async (credId: string) => {
+	const handleRemove = (credId: string) => {
+		setRemovingCredId(credId);
+	};
+
+	const handleRemoveWithPin = async (removePin: string) => {
+		if (!removingCredId) return;
 		try {
-			await api.removeKey(credId);
+			await api.removeKey(removingCredId, removePin);
+			setRemovingCredId(null);
 			await onRefresh();
 		} catch (err: unknown) {
 			onError(friendlyError(err));
+			setRemovingCredId(null);
 		}
 	};
 
@@ -52,20 +60,26 @@ export function KeysTab() {
 				</button>
 			</div>
 			{keys.map((k) => (
-				<div
-					key={k.credential_id}
-					className="glass rounded-xl px-4 py-3 flex items-center justify-between"
-				>
-					<span className="text-sm font-medium text-text">{k.label}</span>
-					<button
-						type="button"
-						onClick={() => handleRemove(k.credential_id)}
-						disabled={keys.length <= 1}
-						aria-label={`Remove ${k.label}`}
-						className="text-xs text-text-secondary hover:text-error transition-colors disabled:opacity-30"
-					>
-						Remove
-					</button>
+				<div key={k.credential_id} className="space-y-0">
+					<div className="glass rounded-xl px-4 py-3 flex items-center justify-between">
+						<span className="text-sm font-medium text-text">{k.label}</span>
+						<button
+							type="button"
+							onClick={() => handleRemove(k.credential_id)}
+							disabled={keys.length <= 1 || removingCredId !== null}
+							aria-label={`Remove ${k.label}`}
+							className="text-xs text-text-secondary hover:text-error transition-colors disabled:opacity-30"
+						>
+							Remove
+						</button>
+					</div>
+					{removingCredId === k.credential_id && (
+						<PinAuth
+							label={`Authenticate to remove "${k.label}"`}
+							onSubmit={handleRemoveWithPin}
+							onCancel={() => setRemovingCredId(null)}
+						/>
+					)}
 				</div>
 			))}
 

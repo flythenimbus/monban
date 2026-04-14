@@ -14,21 +14,10 @@ import * as application$0 from "../github.com/wailsapp/wails/v3/pkg/application/
 import * as $models from "./models.js";
 
 /**
- * AddFile adds a single file to the protected list.
- */
-export function AddFile(path: string): $CancellablePromise<void> {
-    return $Call.ByID(4103961850, path);
-}
-
-export function AddFolder(path: string): $CancellablePromise<void> {
-    return $Call.ByID(2264495576, path);
-}
-
-/**
  * AddFolder adds a folder to the protected list. Files are encrypted in place on lock.
  */
-export function AddPath(path: string): $CancellablePromise<void> {
-    return $Call.ByID(2553945579, path);
+export function AddPath(path: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2553945579, path, pin);
 }
 
 /**
@@ -73,7 +62,7 @@ export function ExitFullscreen(): $CancellablePromise<void> {
 }
 
 /**
- * GetSettings returns the combined settings from both configs.
+ * GetSettings returns settings from the secure config.
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
     return $Call.ByID(2554697378).then(($result: any) => {
@@ -145,16 +134,18 @@ export function Register(pin: string, label: string): $CancellablePromise<void> 
 
 /**
  * RemoveFolder removes a folder from protection. Ensures files are decrypted first.
+ * Requires FIDO2 re-auth.
  */
-export function RemoveFolder(folderPath: string): $CancellablePromise<void> {
-    return $Call.ByID(58441789, folderPath);
+export function RemoveFolder(folderPath: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(58441789, folderPath, pin);
 }
 
 /**
  * RemoveKey removes a registered credential. Cannot remove the last key.
+ * Requires FIDO2 re-auth.
  */
-export function RemoveKey(credentialID: string): $CancellablePromise<void> {
-    return $Call.ByID(2578636620, credentialID);
+export function RemoveKey(credentialID: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2578636620, credentialID, pin);
 }
 
 /**
@@ -176,7 +167,8 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
 }
 
 /**
- * StartDeviceWatcher polls for security key presence and locks when removed.
+ * StartDeviceWatcher polls for security key presence and counter file integrity,
+ * locking vaults if either the key is removed or the counter file is deleted.
  */
 export function StartDeviceWatcher(): $CancellablePromise<void> {
     return $Call.ByID(1189108695);
@@ -190,16 +182,15 @@ export function Unlock(pin: string): $CancellablePromise<void> {
 }
 
 /**
- * UpdateSettings saves settings, routing each field to the appropriate config.
- * Sensitive settings (force_authentication, sudo_gate) go to the secure config.
- * All privileged writes are batched into a single root escalation prompt.
+ * UpdateSettings saves all settings to the HMAC-signed secure config.
+ * All changes require a fresh FIDO2 assertion (PIN + touch).
  */
-export function UpdateSettings(settings: $models.CombinedSettings): $CancellablePromise<void> {
-    return $Call.ByID(2894041249, settings);
+export function UpdateSettings(settings: $models.CombinedSettings, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2894041249, settings, pin);
 }
 
 /**
- * UpdateVaultMode changes the decrypt mode for a vault.
+ * UpdateVaultMode changes the decrypt mode for a vault. Requires FIDO2 re-auth.
  */
 export function UpdateVaultMode(path: string, mode: string, pin: string): $CancellablePromise<void> {
     return $Call.ByID(1049583931, path, mode, pin);

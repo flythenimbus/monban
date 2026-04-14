@@ -9,6 +9,7 @@ type View = "loading" | "setup" | "lock" | "admin";
 
 function App() {
 	const [view, setView] = useState<View>("loading");
+	const [rollbackWarning, setRollbackWarning] = useState(false);
 
 	const checkState = useCallback(async () => {
 		try {
@@ -27,7 +28,14 @@ function App() {
 
 	useEffect(() => {
 		checkState();
-		return Events.On("app:locked", () => setView("lock"));
+		const offLocked = Events.On("app:locked", () => setView("lock"));
+		const offRollback = Events.On("app:config-rollback-detected", () =>
+			setRollbackWarning(true),
+		);
+		return () => {
+			offLocked();
+			offRollback();
+		};
 	}, [checkState]);
 
 	switch (view) {
@@ -56,7 +64,12 @@ function App() {
 				/>
 			);
 		case "admin":
-			return <AdminPanel />;
+			return (
+				<AdminPanel
+					rollbackWarning={rollbackWarning}
+					onDismissRollback={() => setRollbackWarning(false)}
+				/>
+			);
 	}
 }
 

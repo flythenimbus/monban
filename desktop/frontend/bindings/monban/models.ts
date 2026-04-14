@@ -39,8 +39,8 @@ export class AppStatus {
 }
 
 /**
- * CombinedSettings is the frontend-facing settings object that merges
- * fields from both user config and secure config.
+ * CombinedSettings is the frontend-facing settings object.
+ * All fields are stored in the HMAC-signed secure config.
  */
 export class CombinedSettings {
     "open_on_startup": boolean;

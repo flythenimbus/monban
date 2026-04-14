@@ -13,9 +13,6 @@ func pamSuPath() string {
 	return "/etc/pam.d/su"
 }
 
-func secureConfigDir() string {
-	return "/etc/monban"
-}
 
 // RunWithPrivileges executes a shell command with root privileges using pkexec.
 func RunWithPrivileges(shellCmd string) error {

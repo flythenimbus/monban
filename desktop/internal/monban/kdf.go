@@ -100,6 +100,17 @@ func UnwrapKey(wrappingKey, data []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// DeriveConfigAuthKey derives a key for HMAC-signing the secure config.
+// This key is derived from the master secret and is used to detect tampering.
+func DeriveConfigAuthKey(masterSecret, hmacSalt []byte) ([]byte, error) {
+	r := hkdf.New(sha256.New, masterSecret, hmacSalt, []byte("monban-config-auth-v1"))
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(r, key); err != nil {
+		return nil, fmt.Errorf("HKDF config auth key: %w", err)
+	}
+	return key, nil
+}
+
 // ZeroBytes overwrites byte slices with zeros.
 // Call this on sensitive key material when it's no longer needed.
 func ZeroBytes(slices ...[]byte) {

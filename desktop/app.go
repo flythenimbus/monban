@@ -41,8 +41,8 @@ type DiskSpaceInfo struct {
 	SafeToMigrate bool    `json:"safe_to_migrate"`
 }
 
-// CombinedSettings is the frontend-facing settings object that merges
-// fields from both user config and secure config.
+// CombinedSettings is the frontend-facing settings object.
+// All fields are stored in the HMAC-signed secure config.
 type CombinedSettings struct {
 	OpenOnStartup       bool   `json:"open_on_startup"`
 	ForceAuthentication bool   `json:"force_authentication"`
@@ -51,7 +51,6 @@ type CombinedSettings struct {
 
 type App struct {
 	mu           sync.Mutex
-	config       *monban.Config
 	secureCfg    *monban.SecureConfig
 	locked       bool
 	masterSecret []byte // in-memory only, zeroed on lock
@@ -63,11 +62,44 @@ func NewApp() *App {
 	return &App{locked: true}
 }
 
+// saveSignedSecureConfig increments the counter, signs the config, saves it,
+// and writes the encrypted counter file. Caller must hold a.mu and ensure
+// masterSecret, hmacSalt, and encKey are valid.
+func (a *App) saveSignedSecureConfig(sc *monban.SecureConfig, masterSecret, hmacSalt []byte) error {
+	sc.ConfigCounter++
+
+	if err := monban.SignSecureConfig(sc, masterSecret, hmacSalt); err != nil {
+		return fmt.Errorf("signing secure config: %w", err)
+	}
+	if err := monban.SaveSecureConfig(sc); err != nil {
+		return err
+	}
+
+	// Write encrypted counter — requires encKey (derived from master secret)
+	encKey := a.encKey
+	if encKey == nil {
+		// During registration, encKey isn't set yet — derive it
+		var err error
+		encKey, err = monban.DeriveEncryptionKey(masterSecret, hmacSalt)
+		if err != nil {
+			return fmt.Errorf("deriving enc key for counter: %w", err)
+		}
+		defer monban.ZeroBytes(encKey)
+	}
+
+	if err := monban.SaveCounter(encKey, sc.ConfigCounter); err != nil {
+		return fmt.Errorf("saving counter: %w", err)
+	}
+
+	return nil
+}
+
 func (a *App) SetWindow(w *application.WebviewWindow) {
 	a.window = w
 }
 
-// StartDeviceWatcher polls for security key presence and locks when removed.
+// StartDeviceWatcher polls for security key presence and counter file integrity,
+// locking vaults if either the key is removed or the counter file is deleted.
 func (a *App) StartDeviceWatcher() {
 	const missThreshold = 2 // require 2 consecutive misses to avoid USB glitches
 	misses := 0
@@ -81,21 +113,36 @@ func (a *App) StartDeviceWatcher() {
 				continue
 			}
 
+			triggerLock := false
+			reason := ""
+
+			// Check security key presence
 			connected, err := monban.DetectDevice()
 			if err != nil || !connected {
 				misses++
 				if misses >= missThreshold {
-					log.Println("monban: security key removed, locking vaults...")
-					if err := a.Lock(); err != nil {
-						log.Printf("monban: error locking on device removal: %v", err)
-					}
-					a.EnterFullscreen()
-					if a.window != nil {
-						a.window.EmitEvent("app:locked")
-					}
-					misses = 0
+					triggerLock = true
+					reason = "security key removed"
 				}
 			} else {
+				misses = 0
+			}
+
+			// Check counter file integrity
+			if !triggerLock && !monban.CounterFileExists() {
+				triggerLock = true
+				reason = "counter file deleted"
+			}
+
+			if triggerLock {
+				log.Printf("monban: %s, locking vaults...", reason)
+				if err := a.Lock(); err != nil {
+					log.Printf("monban: error locking: %v", err)
+				}
+				a.EnterFullscreen()
+				if a.window != nil {
+					a.window.EmitEvent("app:locked")
+				}
 				misses = 0
 			}
 		}
@@ -150,38 +197,43 @@ func (a *App) IsRegistered() bool {
 	return monban.SecureConfigExists()
 }
 
-// GetSettings returns the combined settings from both configs.
+// GetSettings returns settings from the secure config.
 func (a *App) GetSettings() CombinedSettings {
-	cfg, err := monban.LoadConfig()
-	if err != nil {
-		cfg = &monban.Config{Settings: monban.Settings{OpenOnStartup: true}}
-	}
-
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {
-		sc = &monban.SecureConfig{ForceAuthentication: true}
+		return CombinedSettings{OpenOnStartup: true, ForceAuthentication: true}
 	}
 
 	return CombinedSettings{
-		OpenOnStartup:       cfg.Settings.OpenOnStartup,
+		OpenOnStartup:       sc.OpenOnStartup,
 		ForceAuthentication: sc.ForceAuthentication,
 		SudoGate:            sc.SudoGate,
 	}
 }
 
-// UpdateSettings saves settings, routing each field to the appropriate config.
-// Sensitive settings (force_authentication, sudo_gate) go to the secure config.
-// All privileged writes are batched into a single root escalation prompt.
-func (a *App) UpdateSettings(settings CombinedSettings) error {
-	// --- User config (no escalation) ---
-	cfg, err := monban.LoadConfig()
+// UpdateSettings saves all settings to the HMAC-signed secure config.
+// All changes require a fresh FIDO2 assertion (PIN + touch).
+func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
-		return err
+		return nil // not registered yet
 	}
-	cfg.Settings.OpenOnStartup = settings.OpenOnStartup
-	if err := monban.SaveConfig(cfg); err != nil {
-		return err
+
+	prevForceAuth := sc.ForceAuthentication
+
+	// Fresh FIDO2 assertion — all settings are security-relevant
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
 	}
+	defer monban.ZeroBytes(masterSecret)
+
+	sc.OpenOnStartup = settings.OpenOnStartup
+	sc.ForceAuthentication = settings.ForceAuthentication
+	sc.SudoGate = settings.SudoGate
 
 	if settings.OpenOnStartup {
 		installLaunchAgent()
@@ -189,44 +241,15 @@ func (a *App) UpdateSettings(settings CombinedSettings) error {
 		removeLaunchAgent()
 	}
 
-	// --- Secure config (single batched root escalation) ---
-	sc, err := monban.LoadSecureConfig()
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
 	if err != nil {
-		return nil // not registered yet
+		return fmt.Errorf("decoding hmac salt: %w", err)
 	}
 
-	prevForceAuth := sc.ForceAuthentication
-	prevSudoGate := sc.SudoGate
-	sudoGateChanged := settings.SudoGate != prevSudoGate
-	secureChanged := settings.ForceAuthentication != prevForceAuth || sudoGateChanged
-
-	if !secureChanged {
-		return nil
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
+		return fmt.Errorf("applying settings: %w", err)
 	}
 
-	// Build all privileged writes for a single escalation.
-	var writes []monban.PrivilegedWrite
-
-	// 1. Updated secure config
-	sc.ForceAuthentication = settings.ForceAuthentication
-	sc.SudoGate = settings.SudoGate
-	scData, err := monban.MarshalSecureConfig(sc)
-	if err != nil {
-		return err
-	}
-	writes = append(writes, monban.PrivilegedWrite{
-		Path:      monban.SecureConfigPath(),
-		Content:   string(scData),
-		Mode:      0644,
-		MkdirPath: monban.SecureConfigDir(),
-	})
-
-	// Single privilege escalation for all writes.
-	if err := monban.BatchPrivilegedWrites(writes); err != nil {
-		return fmt.Errorf("applying secure settings: %w", err)
-	}
-
-	// Post-escalation side effects
 	if settings.ForceAuthentication && !prevForceAuth && !HasAccessibilityPermission() {
 		PromptAccessibilityPermission()
 	}
@@ -289,18 +312,8 @@ func (a *App) prepareFirstRegistration() (*monban.SecureConfig, []byte, []byte, 
 		HmacSalt:            monban.EncodeB64(hmacSalt),
 		Credentials:         []monban.CredentialEntry{},
 		ForceAuthentication: true,
-	}
-
-	if !monban.ConfigExists() {
-		cfg := &monban.Config{
-			Vaults: []monban.VaultEntry{},
-			Settings: monban.Settings{
-				OpenOnStartup: true,
-			},
-		}
-		if err := monban.SaveConfig(cfg); err != nil {
-			return nil, nil, nil, fmt.Errorf("saving user config: %w", err)
-		}
+		Vaults:              []monban.VaultEntry{},
+		OpenOnStartup:       true,
 	}
 
 	return sc, hmacSalt, masterSecret, nil
@@ -369,8 +382,8 @@ func (a *App) Register(pin string, label string) error {
 		WrappedKey:   monban.EncodeB64(wrapped),
 	})
 
-	// Save secure config (root escalation)
-	if err := monban.SaveSecureConfig(sc); err != nil {
+	// Sign and save secure config (root escalation)
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving secure config: %w", err)
 	}
 
@@ -380,12 +393,12 @@ func (a *App) Register(pin string, label string) error {
 		return err
 	}
 
-	cfg, _ := monban.LoadConfig()
-	a.config = cfg
 	a.secureCfg = sc
 	a.masterSecret = masterSecret
 	a.encKey = encKey
 	a.locked = false
+
+	monban.LockConfigDir()
 
 	return nil
 }
@@ -471,20 +484,56 @@ func (a *App) Unlock(pin string) error {
 		return fmt.Errorf("assertion verification failed: %w", err)
 	}
 
+	// Verify secure config HMAC (tamper detection)
+	if err := monban.VerifySecureConfig(sc, masterSecret, hmacSalt); err != nil {
+		if err == monban.ErrConfigUnsigned {
+			// First unlock after upgrade — sign and write counter
+			log.Println("secure config unsigned, signing on first unlock")
+			sc.ConfigCounter++
+			if signErr := monban.SignSecureConfig(sc, masterSecret, hmacSalt); signErr == nil {
+				_ = monban.SaveSecureConfig(sc)
+				encKeyTmp, dErr := monban.DeriveEncryptionKey(masterSecret, hmacSalt)
+				if dErr == nil {
+					_ = monban.SaveCounter(encKeyTmp, sc.ConfigCounter)
+					monban.ZeroBytes(encKeyTmp)
+				}
+			}
+		} else {
+			return fmt.Errorf("secure config integrity check failed — possible tampering detected")
+		}
+	}
+
 	// Derive file encryption key
 	encKey, err := monban.DeriveEncryptionKey(masterSecret, hmacSalt)
 	if err != nil {
 		return err
 	}
 
-	// Load user config for vault list
-	cfg, err := monban.LoadConfig()
-	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
+	// Verify counter (rollback detection)
+	storedCounter, counterErr := monban.LoadCounter(encKey)
+	counterMissing := counterErr != nil && sc.ConfigCounter > 0
+	if counterErr != nil && sc.ConfigCounter > 0 {
+		log.Printf("monban: counter file missing or unreadable with non-zero config counter — possible deletion")
+	} else if counterErr != nil {
+		log.Printf("monban: could not load counter: %v (may be first run)", counterErr)
+	}
+	if counterMissing || sc.ConfigCounter < storedCounter {
+		log.Printf("monban: config rollback detected (config=%d, counter=%d) — healing", sc.ConfigCounter, storedCounter)
+		// Don't reject — this could be a legitimate backup restore.
+		// The user already proved possession of the security key via FIDO2.
+		// Heal the counter and re-sign.
+		sc.ConfigCounter = storedCounter
+		if signErr := monban.SignSecureConfig(sc, masterSecret, hmacSalt); signErr == nil {
+			_ = monban.SaveSecureConfig(sc)
+			_ = monban.SaveCounter(encKey, sc.ConfigCounter)
+		}
+		if a.window != nil {
+			a.window.EmitEvent("app:config-rollback-detected")
+		}
 	}
 
 	// Unlock all eager vaults
-	for _, v := range cfg.Vaults {
+	for _, v := range sc.Vaults {
 		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
 			continue
 		}
@@ -493,11 +542,12 @@ func (a *App) Unlock(pin string) error {
 		}
 	}
 
-	a.config = cfg
 	a.secureCfg = sc
 	a.masterSecret = masterSecret
 	a.encKey = encKey
 	a.locked = false
+
+	monban.LockConfigDir()
 
 	return nil
 }
@@ -507,42 +557,50 @@ func (a *App) Lock() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.config == nil || a.secureCfg == nil {
+	if a.secureCfg == nil {
 		return fmt.Errorf("config not found")
 	}
+
+	// Restore directory write permission for vault locking
+	monban.UnlockConfigDir()
 
 	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
 	if err != nil {
 		return fmt.Errorf("decoding hmac salt: %w", err)
 	}
 
-	for _, v := range a.config.Vaults {
+	var lockErr error
+	for _, v := range a.secureCfg.Vaults {
 		mode := a.secureCfg.VaultDecryptMode(v.Path)
 		if mode == monban.DecryptLazyStrict {
 			lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, v.Path)
 			if err != nil {
-				return fmt.Errorf("deriving lazy strict key: %w", err)
+				lockErr = fmt.Errorf("deriving lazy strict key: %w", err)
+				break
 			}
 			if err := monban.LockVaultEntry(lazyKey, v); err != nil {
 				monban.ZeroBytes(lazyKey)
-				return err
+				lockErr = err
+				break
 			}
 			monban.ZeroBytes(lazyKey)
 		} else {
 			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
-				return err
+				lockErr = err
+				break
 			}
 		}
 	}
 
-	// Zero sensitive data
+	// Always zero secrets and re-lock directory, even on error
 	monban.ZeroBytes(a.masterSecret)
 	monban.ZeroBytes(a.encKey)
 	a.masterSecret = nil
 	a.encKey = nil
 	a.locked = true
+	monban.LockConfigDir()
 
-	return nil
+	return lockErr
 }
 
 // GetStatus returns the current app state.
@@ -555,24 +613,19 @@ func (a *App) GetStatus() AppStatus {
 		Registered: monban.SecureConfigExists(),
 	}
 
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return status
 	}
 
-	sc, _ := monban.LoadSecureConfig()
-
-	for _, v := range cfg.Vaults {
+	for _, v := range sc.Vaults {
 		locked := false
 		if v.IsFile() {
 			locked = monban.IsFileLocked(v.Path)
 		} else {
 			locked = monban.IsLocked(v.Path)
 		}
-		decryptMode := "eager"
-		if sc != nil {
-			decryptMode = string(sc.VaultDecryptMode(v.Path))
-		}
+		decryptMode := string(sc.VaultDecryptMode(v.Path))
 		status.Vaults = append(status.Vaults, VaultStatus{
 			Label:       v.Label,
 			Path:        v.Path,
@@ -603,9 +656,14 @@ func (a *App) ListKeys() ([]KeyInfo, error) {
 }
 
 // RemoveKey removes a registered credential. Cannot remove the last key.
-func (a *App) RemoveKey(credentialID string) error {
+// Requires FIDO2 re-auth.
+func (a *App) RemoveKey(credentialID string, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if a.locked {
+		return fmt.Errorf("must be unlocked to remove a key")
+	}
 
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {
@@ -627,10 +685,20 @@ func (a *App) RemoveKey(credentialID string) error {
 		return fmt.Errorf("credential not found")
 	}
 
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
+
 	sc.Credentials = append(sc.Credentials[:idx], sc.Credentials[idx+1:]...)
 
-	// Save secure config (root escalation)
-	if err := monban.SaveSecureConfig(sc); err != nil {
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving secure config: %w", err)
 	}
 
@@ -674,7 +742,7 @@ func (a *App) CheckDiskSpace(path string) DiskSpaceInfo {
 }
 
 // AddFolder adds a folder to the protected list. Files are encrypted in place on lock.
-func (a *App) AddPath(path string) error {
+func (a *App) AddPath(path string, pin string) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolving path: %w", err)
@@ -684,12 +752,13 @@ func (a *App) AddPath(path string) error {
 		return fmt.Errorf("path not found: %w", err)
 	}
 	if info.IsDir() {
-		return a.AddFolder(absPath)
+		return a.addFolder(absPath, pin)
 	}
-	return a.AddFile(absPath)
+	return a.addFile(absPath, pin)
 }
 
-func (a *App) AddFolder(path string) error {
+// addFolder is the internal implementation. Caller must NOT hold a.mu.
+func (a *App) addFolder(absPath string, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -697,24 +766,18 @@ func (a *App) AddFolder(path string) error {
 		return fmt.Errorf("must be unlocked to add folders")
 	}
 
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return err
 	}
 
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolving path: %w", err)
-	}
-
-	if monban.FindVaultIndex(cfg.Vaults, absPath) != -1 {
+	if monban.FindVaultIndex(sc.Vaults, absPath) != -1 {
 		return fmt.Errorf("already protected: %s", absPath)
 	}
-	if err := monban.CheckVaultOverlap(cfg.Vaults, absPath); err != nil {
+	if err := monban.CheckVaultOverlap(sc.Vaults, absPath); err != nil {
 		return err
 	}
 
-	// Verify folder exists
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return fmt.Errorf("folder not found: %w", err)
@@ -723,7 +786,6 @@ func (a *App) AddFolder(path string) error {
 		return fmt.Errorf("not a directory: %s", absPath)
 	}
 
-	// Disk space check — need room for .enc copies alongside originals during lock
 	folderBytes, err := monban.FolderSize(absPath)
 	if err != nil {
 		return fmt.Errorf("measuring folder: %w", err)
@@ -738,22 +800,33 @@ func (a *App) AddFolder(path string) error {
 		return fmt.Errorf("insufficient disk space: need %.1f GB free, have %.1f GB", needGB, haveGB)
 	}
 
-	label := filepath.Base(absPath)
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
 
-	cfg.Vaults = append(cfg.Vaults, monban.VaultEntry{
+	label := filepath.Base(absPath)
+	sc.Vaults = append(sc.Vaults, monban.VaultEntry{
 		Label: label,
 		Path:  absPath,
 	})
-	if err := monban.SaveConfig(cfg); err != nil {
+
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	a.config = cfg
+	a.secureCfg = sc
 	return nil
 }
 
 // RemoveFolder removes a folder from protection. Ensures files are decrypted first.
-func (a *App) RemoveFolder(folderPath string) error {
+// Requires FIDO2 re-auth.
+func (a *App) RemoveFolder(folderPath string, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -761,32 +834,43 @@ func (a *App) RemoveFolder(folderPath string) error {
 		return fmt.Errorf("must be unlocked to remove folders")
 	}
 
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return err
 	}
 
-	idx := monban.FindVaultIndex(cfg.Vaults, folderPath)
+	idx := monban.FindVaultIndex(sc.Vaults, folderPath)
 	if idx == -1 {
 		return fmt.Errorf("folder not found: %s", folderPath)
 	}
 
 	// Ensure files are decrypted
-	if err := monban.UnlockVaultEntry(a.encKey, cfg.Vaults[idx]); err != nil {
+	if err := monban.UnlockVaultEntry(a.encKey, sc.Vaults[idx]); err != nil {
 		return err
 	}
 
-	cfg.Vaults = append(cfg.Vaults[:idx], cfg.Vaults[idx+1:]...)
-	if err := monban.SaveConfig(cfg); err != nil {
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
+
+	sc.Vaults = append(sc.Vaults[:idx], sc.Vaults[idx+1:]...)
+
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	a.config = cfg
+	a.secureCfg = sc
 	return nil
 }
 
-// AddFile adds a single file to the protected list.
-func (a *App) AddFile(path string) error {
+// addFile is the internal implementation. Caller must NOT hold a.mu.
+func (a *App) addFile(absPath string, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -794,20 +878,15 @@ func (a *App) AddFile(path string) error {
 		return fmt.Errorf("must be unlocked to add files")
 	}
 
-	cfg, err := monban.LoadConfig()
+	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return err
 	}
 
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return fmt.Errorf("resolving path: %w", err)
-	}
-
-	if monban.FindVaultIndex(cfg.Vaults, absPath) != -1 {
+	if monban.FindVaultIndex(sc.Vaults, absPath) != -1 {
 		return fmt.Errorf("already protected: %s", absPath)
 	}
-	if err := monban.CheckVaultOverlap(cfg.Vaults, absPath); err != nil {
+	if err := monban.CheckVaultOverlap(sc.Vaults, absPath); err != nil {
 		return err
 	}
 
@@ -816,10 +895,9 @@ func (a *App) AddFile(path string) error {
 		return fmt.Errorf("file not found: %w", err)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("path is a directory, use AddFolder: %s", absPath)
+		return fmt.Errorf("path is a directory: %s", absPath)
 	}
 
-	// Disk space check
 	freeBytes, err := monban.FreeSpace(absPath)
 	if err != nil {
 		return fmt.Errorf("checking free space: %w", err)
@@ -831,18 +909,28 @@ func (a *App) AddFile(path string) error {
 		return fmt.Errorf("insufficient disk space: need %.1f MB free, have %.1f MB", needMB, haveMB)
 	}
 
-	label := filepath.Base(absPath)
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
 
-	cfg.Vaults = append(cfg.Vaults, monban.VaultEntry{
+	label := filepath.Base(absPath)
+	sc.Vaults = append(sc.Vaults, monban.VaultEntry{
 		Label: label,
 		Path:  absPath,
 		Type:  "file",
 	})
-	if err := monban.SaveConfig(cfg); err != nil {
+
+	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	if err != nil {
+		return fmt.Errorf("decoding hmac salt: %w", err)
+	}
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving config: %w", err)
 	}
 
-	a.config = cfg
+	a.secureCfg = sc
 	return nil
 }
 
@@ -850,7 +938,7 @@ func (a *App) DecryptLazyVault(path string, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.config == nil {
+	if a.secureCfg == nil {
 		return fmt.Errorf("no config found")
 	}
 
@@ -859,12 +947,12 @@ func (a *App) DecryptLazyVault(path string, pin string) error {
 		return fmt.Errorf("resolving path: %w", err)
 	}
 
-	idx := monban.FindVaultIndex(a.config.Vaults, absPath)
+	idx := monban.FindVaultIndex(a.secureCfg.Vaults, absPath)
 	if idx == -1 {
 		return fmt.Errorf("not found: %s", absPath)
 	}
 
-	v := a.config.Vaults[idx]
+	v := a.secureCfg.Vaults[idx]
 	decMode := a.secureCfg.VaultDecryptMode(absPath)
 
 	if decMode == monban.DecryptEager || decMode == monban.DecryptLazy {
@@ -908,7 +996,7 @@ func (a *App) LockVault(path string) error {
 		return fmt.Errorf("app is locked")
 	}
 
-	if a.config == nil || a.secureCfg == nil {
+	if a.secureCfg == nil {
 		return fmt.Errorf("no config found")
 	}
 
@@ -917,12 +1005,12 @@ func (a *App) LockVault(path string) error {
 		return fmt.Errorf("resolving path: %w", err)
 	}
 
-	idx := monban.FindVaultIndex(a.config.Vaults, absPath)
+	idx := monban.FindVaultIndex(a.secureCfg.Vaults, absPath)
 	if idx == -1 {
 		return fmt.Errorf("not found: %s", absPath)
 	}
 
-	v := a.config.Vaults[idx]
+	v := a.secureCfg.Vaults[idx]
 	mode := a.secureCfg.VaultDecryptMode(absPath)
 
 	if mode == monban.DecryptLazyStrict {
@@ -1029,7 +1117,7 @@ func (a *App) fidoReauth(pin string) ([]byte, error) {
 	return masterSecret, nil
 }
 
-// UpdateVaultMode changes the decrypt mode for a vault.
+// UpdateVaultMode changes the decrypt mode for a vault. Requires FIDO2 re-auth.
 func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -1038,7 +1126,7 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		return fmt.Errorf("must be unlocked")
 	}
 
-	if a.config == nil || a.secureCfg == nil {
+	if a.secureCfg == nil {
 		return fmt.Errorf("no config found")
 	}
 
@@ -1047,18 +1135,25 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		return fmt.Errorf("resolving path: %w", err)
 	}
 
-	idx := monban.FindVaultIndex(a.config.Vaults, absPath)
+	idx := monban.FindVaultIndex(a.secureCfg.Vaults, absPath)
 	if idx == -1 {
 		return fmt.Errorf("not found: %s", absPath)
 	}
 
-	v := a.config.Vaults[idx]
+	v := a.secureCfg.Vaults[idx]
 	newMode := monban.DecryptMode(mode)
 	oldMode := a.secureCfg.VaultDecryptMode(absPath)
 
 	if oldMode == newMode {
 		return nil
 	}
+
+	// FIDO2 re-auth for all mode changes
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
 
 	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
 	if err != nil {
@@ -1070,11 +1165,10 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		// eager <-> lazy: no re-encryption needed, just update flag
 
 	case oldMode != monban.DecryptLazyStrict && newMode == monban.DecryptLazyStrict:
-		// eager/lazy -> lazy_strict: decrypt with encKey if locked, then re-encrypt with lazyStrictKey
 		if err := monban.UnlockVaultEntry(a.encKey, v); err != nil {
 			return fmt.Errorf("decrypting vault for mode change: %w", err)
 		}
-		lazyStrictKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, absPath)
+		lazyStrictKey, err := monban.DeriveLazyStrictKey(masterSecret, hmacSalt, absPath)
 		if err != nil {
 			return fmt.Errorf("deriving lazy strict key: %w", err)
 		}
@@ -1085,14 +1179,7 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		monban.ZeroBytes(lazyStrictKey)
 
 	case oldMode == monban.DecryptLazyStrict && newMode != monban.DecryptLazyStrict:
-		// lazy_strict -> eager/lazy: need FIDO2 re-auth to get lazyStrictKey
-		masterSecret, err := a.fidoReauth(pin)
-		if err != nil {
-			return fmt.Errorf("FIDO2 re-auth failed: %w", err)
-		}
-
 		lazyStrictKey, err := monban.DeriveLazyStrictKey(masterSecret, hmacSalt, absPath)
-		monban.ZeroBytes(masterSecret)
 		if err != nil {
 			return fmt.Errorf("deriving lazy strict key: %w", err)
 		}
@@ -1103,7 +1190,6 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		}
 		monban.ZeroBytes(lazyStrictKey)
 
-		// If new mode is lazy, re-encrypt with encKey
 		if newMode == monban.DecryptLazy {
 			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
 				return fmt.Errorf("re-encrypting vault with enc key: %w", err)
@@ -1121,7 +1207,7 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		a.secureCfg.VaultDecryptModes[absPath] = newMode
 	}
 
-	if err := monban.SaveSecureConfig(a.secureCfg); err != nil {
+	if err := a.saveSignedSecureConfig(a.secureCfg, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving secure config: %w", err)
 	}
 
