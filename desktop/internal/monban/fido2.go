@@ -30,22 +30,6 @@ func DetectDevice() (bool, error) {
 	return len(locs) > 0, nil
 }
 
-func openDevice() (*libfido2.Device, error) {
-	locs, err := libfido2.DeviceLocations()
-	if err != nil {
-		return nil, fmt.Errorf("detecting FIDO2 devices: %w", err)
-	}
-	if len(locs) == 0 {
-		return nil, fmt.Errorf("no FIDO2 device found — insert your security key")
-	}
-
-	dev, err := libfido2.NewDevice(locs[0].Path)
-	if err != nil {
-		return nil, fmt.Errorf("opening FIDO2 device: %w", err)
-	}
-	return dev, nil
-}
-
 // CheckHMACSecret verifies that the connected FIDO2 device supports the
 // hmac-secret extension, which is required for key derivation.
 func CheckHMACSecret() error {
@@ -146,4 +130,22 @@ func Assert(pin string, credIDs [][]byte, hmacSalt []byte) (*FIDOAssertion, erro
 		HMACSecret:   assertion.HMACSecret,
 		CredentialID: assertion.CredentialID,
 	}, nil
+}
+
+// --- Private functions ---
+
+func openDevice() (*libfido2.Device, error) {
+	locs, err := libfido2.DeviceLocations()
+	if err != nil {
+		return nil, fmt.Errorf("detecting FIDO2 devices: %w", err)
+	}
+	if len(locs) == 0 {
+		return nil, fmt.Errorf("no FIDO2 device found — insert your security key")
+	}
+
+	dev, err := libfido2.NewDevice(locs[0].Path)
+	if err != nil {
+		return nil, fmt.Errorf("opening FIDO2 device: %w", err)
+	}
+	return dev, nil
 }

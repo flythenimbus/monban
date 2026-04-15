@@ -6,15 +6,6 @@ import (
 	"os/exec"
 )
 
-func pamSudoPath() string {
-	return "/etc/pam.d/sudo_local"
-}
-
-func pamSuPath() string {
-	return "/etc/pam.d/su"
-}
-
-
 // RunWithPrivileges executes a shell command with root privileges using
 // osascript to present a native macOS authorization dialog.
 // The command is passed directly to `do shell script` which runs /bin/sh -c.
@@ -28,4 +19,12 @@ func RunWithPrivileges(shellCmd string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func pamSudoPath() string {
+	return "/etc/pam.d/sudo_local"
+}
+
+func pamSuPath() string {
+	return "/etc/pam.d/su"
 }

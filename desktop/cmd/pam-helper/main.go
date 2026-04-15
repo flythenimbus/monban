@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -281,7 +282,7 @@ func authenticate() error {
 	var verified bool
 	for _, cred := range sc.Credentials {
 		credID, _ := monban.DecodeB64(cred.CredentialID)
-		if assertion.CredentialID != nil && !bytesEqual(credID, assertion.CredentialID) {
+		if assertion.CredentialID != nil && !bytes.Equal(credID, assertion.CredentialID) {
 			continue
 		}
 		pubX, err := monban.DecodeB64(cred.PublicKeyX)
@@ -305,16 +306,4 @@ func authenticate() error {
 
 	_, _ = fmt.Fprint(tty, "monban: authenticated\n")
 	return nil
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
