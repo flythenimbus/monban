@@ -62,6 +62,75 @@ func IsPamInstalled() bool {
 	return strings.Contains(string(data), pamTag)
 }
 
+// BuildPamContent reads the current sudo PAM config and returns the new content
+// with the monban line inserted (or updated for mode="off", removes the line).
+func BuildPamContent(mode string) (string, error) {
+	return buildPamContentForPath(PamSudoPath(), mode)
+}
+
+// InstallSudoGate inserts the monban PAM line into the sudo config, with
+// root escalation via the platform-native authorization dialog.
+func InstallSudoGate(mode string) error {
+	content, err := BuildPamContent(mode)
+	if err != nil {
+		return err
+	}
+	return writeFilePrivileged(PamSudoPath(), content, 0644)
+}
+
+// RemoveSudoGate removes the monban PAM line from the sudo config.
+func RemoveSudoGate() error {
+	if !IsPamInstalled() {
+		return nil
+	}
+	content, err := BuildPamContent("off")
+	if err != nil {
+		return err
+	}
+	return writeFilePrivileged(PamSudoPath(), content, 0644)
+}
+
+// BatchPrivilegedWrites performs multiple file writes in a single privilege
+// escalation. Each entry maps a destination path to its temp file source.
+// All files are written atomically — if the escalation fails, nothing changes.
+func BatchPrivilegedWrites(writes []PrivilegedWrite) error {
+	if len(writes) == 0 {
+		return nil
+	}
+
+	var parts []string
+	var tmpFiles []string
+
+	for _, w := range writes {
+		tmp, err := writeTempFile(w.Content)
+		if err != nil {
+			// Clean up any temp files already created.
+			for _, t := range tmpFiles {
+				_ = os.Remove(t)
+			}
+			return err
+		}
+		tmpFiles = append(tmpFiles, tmp)
+
+		if w.MkdirPath != "" {
+			parts = append(parts, fmt.Sprintf("mkdir -p %s", shellQuote(w.MkdirPath)))
+		}
+		parts = append(parts, fmt.Sprintf("cp %s %s && chmod %o %s",
+			shellQuote(tmp), shellQuote(w.Path), w.Mode, shellQuote(w.Path)))
+	}
+
+	defer func() {
+		for _, t := range tmpFiles {
+			_ = os.Remove(t)
+		}
+	}()
+
+	cmd := strings.Join(parts, " && ")
+	return RunWithPrivileges(cmd)
+}
+
+// --- Private functions ---
+
 // buildPamContentForPath reads a PAM config file and returns the new content
 // with the monban line inserted (or removed for mode="off").
 func buildPamContentForPath(pamPath, mode string) (string, error) {
@@ -108,34 +177,6 @@ func buildPamContentForPath(pamPath, mode string) (string, error) {
 	return strings.Join(result, "\n"), nil
 }
 
-// BuildPamContent reads the current sudo PAM config and returns the new content
-// with the monban line inserted (or updated for mode="off", removes the line).
-func BuildPamContent(mode string) (string, error) {
-	return buildPamContentForPath(PamSudoPath(), mode)
-}
-
-// InstallSudoGate inserts the monban PAM line into the sudo config, with
-// root escalation via the platform-native authorization dialog.
-func InstallSudoGate(mode string) error {
-	content, err := BuildPamContent(mode)
-	if err != nil {
-		return err
-	}
-	return writeFilePrivileged(PamSudoPath(), content, 0644)
-}
-
-// RemoveSudoGate removes the monban PAM line from the sudo config.
-func RemoveSudoGate() error {
-	if !IsPamInstalled() {
-		return nil
-	}
-	content, err := BuildPamContent("off")
-	if err != nil {
-		return err
-	}
-	return writeFilePrivileged(PamSudoPath(), content, 0644)
-}
-
 // writeFilePrivileged writes content to a root-owned file by writing to a
 // temp file first, then copying with privilege escalation.
 func writeFilePrivileged(path, content string, mode os.FileMode) error {
@@ -147,44 +188,5 @@ func writeFilePrivileged(path, content string, mode os.FileMode) error {
 
 	cmd := fmt.Sprintf("cp %s %s && chmod %o %s",
 		shellQuote(tmp), shellQuote(path), mode, shellQuote(path))
-	return RunWithPrivileges(cmd)
-}
-
-// BatchPrivilegedWrites performs multiple file writes in a single privilege
-// escalation. Each entry maps a destination path to its temp file source.
-// All files are written atomically — if the escalation fails, nothing changes.
-func BatchPrivilegedWrites(writes []PrivilegedWrite) error {
-	if len(writes) == 0 {
-		return nil
-	}
-
-	var parts []string
-	var tmpFiles []string
-
-	for _, w := range writes {
-		tmp, err := writeTempFile(w.Content)
-		if err != nil {
-			// Clean up any temp files already created.
-			for _, t := range tmpFiles {
-				_ = os.Remove(t)
-			}
-			return err
-		}
-		tmpFiles = append(tmpFiles, tmp)
-
-		if w.MkdirPath != "" {
-			parts = append(parts, fmt.Sprintf("mkdir -p %s", shellQuote(w.MkdirPath)))
-		}
-		parts = append(parts, fmt.Sprintf("cp %s %s && chmod %o %s",
-			shellQuote(tmp), shellQuote(w.Path), w.Mode, shellQuote(w.Path)))
-	}
-
-	defer func() {
-		for _, t := range tmpFiles {
-			_ = os.Remove(t)
-		}
-	}()
-
-	cmd := strings.Join(parts, " && ")
 	return RunWithPrivileges(cmd)
 }

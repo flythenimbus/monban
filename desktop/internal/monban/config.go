@@ -76,6 +76,15 @@ var SecureConfigPath = func() string {
 	return filepath.Join(SecureConfigDir(), "credentials.json")
 }
 
+var ErrConfigRollback = fmt.Errorf("secure config counter is behind the encrypted counter — possible rollback attack")
+
+var (
+	ErrConfigTampered = fmt.Errorf("secure config HMAC verification failed: config may have been tampered with")
+	ErrConfigUnsigned = fmt.Errorf("secure config has no HMAC signature (will be signed on next save)")
+)
+
+// --- Public functions ---
+
 func LoadSecureConfig() (*SecureConfig, error) {
 	return LoadSecureConfigFrom(SecureConfigPath())
 }
@@ -145,25 +154,6 @@ func LockConfigDir() {
 // Call before locking the app or when the app shuts down.
 func UnlockConfigDir() {
 	_ = os.Chmod(SecureConfigDir(), 0700)
-}
-
-// unlockConfigDir temporarily restores write permission if the directory is
-// currently locked. Returns true if it was locked (caller should re-lock).
-func unlockConfigDir() bool {
-	info, err := os.Stat(SecureConfigDir())
-	if err != nil {
-		return false
-	}
-	if info.Mode().Perm()&0200 == 0 {
-		_ = os.Chmod(SecureConfigDir(), 0700)
-		return true
-	}
-	return false
-}
-
-// counterPath returns the path to the encrypted counter file.
-func counterPath() string {
-	return filepath.Join(SecureConfigDir(), "counter.enc")
 }
 
 // SaveCounter encrypts the counter value and writes it to counter.enc.
@@ -239,8 +229,6 @@ func CounterFileExists() bool {
 	return err == nil
 }
 
-var ErrConfigRollback = fmt.Errorf("secure config counter is behind the encrypted counter — possible rollback attack")
-
 // VaultDecryptMode returns the current decrypt mode. If empty, returns `"eager"`.
 func (sc *SecureConfig) VaultDecryptMode(path string) DecryptMode {
 	if m, ok := sc.VaultDecryptModes[path]; ok {
@@ -252,6 +240,83 @@ func (sc *SecureConfig) VaultDecryptMode(path string) DecryptMode {
 func SecureConfigExists() bool {
 	_, err := os.Stat(SecureConfigPath())
 	return err == nil
+}
+
+// SignSecureConfig computes the HMAC-SHA256 over the protected fields and stores
+// it in the ConfigHMAC field. Requires the master secret (FIDO2 must be unlocked).
+func SignSecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
+	authKey, err := DeriveConfigAuthKey(masterSecret, hmacSalt)
+	if err != nil {
+		return err
+	}
+	defer ZeroBytes(authKey)
+
+	payload := configHMACPayload(sc)
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write([]byte(payload))
+	sc.ConfigHMAC = EncodeB64(mac.Sum(nil))
+	return nil
+}
+
+// VerifySecureConfig checks whether the config HMAC is valid. Returns nil if
+// the HMAC matches, ErrConfigTampered if it doesn't, or ErrConfigUnsigned if
+// no HMAC is present (first launch after upgrade).
+func VerifySecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
+	if sc.ConfigHMAC == "" {
+		return ErrConfigUnsigned
+	}
+
+	authKey, err := DeriveConfigAuthKey(masterSecret, hmacSalt)
+	if err != nil {
+		return err
+	}
+	defer ZeroBytes(authKey)
+
+	stored, err := DecodeB64(sc.ConfigHMAC)
+	if err != nil {
+		return ErrConfigTampered
+	}
+
+	payload := configHMACPayload(sc)
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write([]byte(payload))
+	expected := mac.Sum(nil)
+
+	if !hmac.Equal(stored, expected) {
+		return ErrConfigTampered
+	}
+	return nil
+}
+
+// --- Helpers ---
+
+func DecodeB64(s string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(s)
+}
+
+func EncodeB64(b []byte) string {
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// --- Private functions ---
+
+// unlockConfigDir temporarily restores write permission if the directory is
+// currently locked. Returns true if it was locked (caller should re-lock).
+func unlockConfigDir() bool {
+	info, err := os.Stat(SecureConfigDir())
+	if err != nil {
+		return false
+	}
+	if info.Mode().Perm()&0200 == 0 {
+		_ = os.Chmod(SecureConfigDir(), 0700)
+		return true
+	}
+	return false
+}
+
+// counterPath returns the path to the encrypted counter file.
+func counterPath() string {
+	return filepath.Join(SecureConfigDir(), "counter.enc")
 }
 
 // --- Config HMAC (tamper detection) ---
@@ -303,65 +368,4 @@ func configHMACPayload(sc *SecureConfig) string {
 	fmt.Fprintf(&b, "config_counter:%d\n", sc.ConfigCounter)
 
 	return b.String()
-}
-
-// SignSecureConfig computes the HMAC-SHA256 over the protected fields and stores
-// it in the ConfigHMAC field. Requires the master secret (FIDO2 must be unlocked).
-func SignSecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
-	authKey, err := DeriveConfigAuthKey(masterSecret, hmacSalt)
-	if err != nil {
-		return err
-	}
-	defer ZeroBytes(authKey)
-
-	payload := configHMACPayload(sc)
-	mac := hmac.New(sha256.New, authKey)
-	mac.Write([]byte(payload))
-	sc.ConfigHMAC = EncodeB64(mac.Sum(nil))
-	return nil
-}
-
-// VerifySecureConfig checks whether the config HMAC is valid. Returns nil if
-// the HMAC matches, ErrConfigTampered if it doesn't, or ErrConfigUnsigned if
-// no HMAC is present (first launch after upgrade).
-func VerifySecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
-	if sc.ConfigHMAC == "" {
-		return ErrConfigUnsigned
-	}
-
-	authKey, err := DeriveConfigAuthKey(masterSecret, hmacSalt)
-	if err != nil {
-		return err
-	}
-	defer ZeroBytes(authKey)
-
-	stored, err := DecodeB64(sc.ConfigHMAC)
-	if err != nil {
-		return ErrConfigTampered
-	}
-
-	payload := configHMACPayload(sc)
-	mac := hmac.New(sha256.New, authKey)
-	mac.Write([]byte(payload))
-	expected := mac.Sum(nil)
-
-	if !hmac.Equal(stored, expected) {
-		return ErrConfigTampered
-	}
-	return nil
-}
-
-var (
-	ErrConfigTampered = fmt.Errorf("secure config HMAC verification failed: config may have been tampered with")
-	ErrConfigUnsigned = fmt.Errorf("secure config has no HMAC signature (will be signed on next save)")
-)
-
-// --- Helpers ---
-
-func DecodeB64(s string) ([]byte, error) {
-	return base64.RawURLEncoding.DecodeString(s)
-}
-
-func EncodeB64(b []byte) string {
-	return base64.RawURLEncoding.EncodeToString(b)
 }
