@@ -10,7 +10,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/user"
@@ -241,9 +240,9 @@ func authenticate() error {
 		return fmt.Errorf("no credentials registered")
 	}
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	// Open /dev/tty for interactive PIN prompt (same technique as ssh).
@@ -262,13 +261,9 @@ func authenticate() error {
 	pin := strings.TrimSpace(string(pinBytes))
 
 	// Collect all credential IDs.
-	credIDs := make([][]byte, len(sc.Credentials))
-	for i, c := range sc.Credentials {
-		id, err := monban.DecodeB64(c.CredentialID)
-		if err != nil {
-			return fmt.Errorf("decoding credential ID: %w", err)
-		}
-		credIDs[i] = id
+	credIDs, err := sc.CollectCredentialIDs()
+	if err != nil {
+		return err
 	}
 
 	// Perform FIDO2 assertion — requires touch + PIN.
@@ -280,21 +275,13 @@ func authenticate() error {
 
 	// Find the matched credential and verify the signature.
 	var verified bool
-	for _, cred := range sc.Credentials {
+	for i := range sc.Credentials {
+		cred := &sc.Credentials[i]
 		credID, _ := monban.DecodeB64(cred.CredentialID)
 		if assertion.CredentialID != nil && !bytes.Equal(credID, assertion.CredentialID) {
 			continue
 		}
-		pubX, err := monban.DecodeB64(cred.PublicKeyX)
-		if err != nil {
-			continue
-		}
-		pubY, err := monban.DecodeB64(cred.PublicKeyY)
-		if err != nil {
-			continue
-		}
-		cdh := sha256.Sum256(hmacSalt)
-		if err := monban.VerifyAssertion(sc.RpID, pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err == nil {
+		if err := monban.VerifyAssertionWithSalt(sc.RpID, cred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err == nil {
 			verified = true
 			break
 		}

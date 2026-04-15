@@ -209,9 +209,9 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 		removeLaunchAgent()
 	}
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
@@ -357,19 +357,15 @@ func (a *App) Unlock(pin string) error {
 		return fmt.Errorf("no credentials registered")
 	}
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	// Collect all credential IDs
-	credIDs := make([][]byte, len(sc.Credentials))
-	for i, c := range sc.Credentials {
-		id, err := monban.DecodeB64(c.CredentialID)
-		if err != nil {
-			return fmt.Errorf("decoding credential ID: %w", err)
-		}
-		credIDs[i] = id
+	credIDs, err := sc.CollectCredentialIDs()
+	if err != nil {
+		return err
 	}
 
 	// Assert with all credential IDs — device responds to the one it recognizes
@@ -390,37 +386,13 @@ func (a *App) Unlock(pin string) error {
 	}
 
 	// Try unwrapping each credential's wrapped key — AES-GCM auth tag validates only for the correct one
-	var masterSecret []byte
-	var matchedCred *monban.CredentialEntry
-	for i := range sc.Credentials {
-		wrapped, err := monban.DecodeB64(sc.Credentials[i].WrappedKey)
-		if err != nil {
-			continue
-		}
-		secret, err := monban.UnwrapKey(wrappingKey, wrapped)
-		if err != nil {
-			continue // wrong key, try next
-		}
-		masterSecret = secret
-		matchedCred = &sc.Credentials[i]
-		break
-	}
-
-	if masterSecret == nil {
-		return fmt.Errorf("could not unwrap master secret — no matching credential found")
+	masterSecret, matchedCred, err := monban.UnwrapMasterSecret(sc, wrappingKey)
+	if err != nil {
+		return err
 	}
 
 	// Verify assertion signature with the matched credential's public key
-	pubX, err := monban.DecodeB64(matchedCred.PublicKeyX)
-	if err != nil {
-		return fmt.Errorf("decoding public key X: %w", err)
-	}
-	pubY, err := monban.DecodeB64(matchedCred.PublicKeyY)
-	if err != nil {
-		return fmt.Errorf("decoding public key Y: %w", err)
-	}
-	cdh := sha256.Sum256(hmacSalt)
-	if err := monban.VerifyAssertion(sc.RpID, pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
+	if err := monban.VerifyAssertionWithSalt(sc.RpID, matchedCred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err != nil {
 		return fmt.Errorf("assertion verification failed: %w", err)
 	}
 
@@ -504,9 +476,9 @@ func (a *App) Lock() error {
 	// Restore directory write permission for vault locking
 	monban.UnlockConfigDir()
 
-	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+	hmacSalt, err := a.secureCfg.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	var lockErr error
@@ -633,9 +605,9 @@ func (a *App) RemoveKey(credentialID string, pin string) error {
 
 	sc.Credentials = append(sc.Credentials[:idx], sc.Credentials[idx+1:]...)
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
@@ -730,9 +702,9 @@ func (a *App) RemoveFolder(folderPath string, pin string) error {
 
 	sc.Vaults = append(sc.Vaults[:idx], sc.Vaults[idx+1:]...)
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving config: %w", err)
@@ -777,9 +749,9 @@ func (a *App) DecryptLazyVault(path string, pin string) error {
 	}
 	defer monban.ZeroBytes(masterSecret)
 
-	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+	hmacSalt, err := a.secureCfg.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	lazyStrictKey, err := monban.DeriveLazyStrictKey(masterSecret, hmacSalt, absPath)
@@ -822,9 +794,9 @@ func (a *App) LockVault(path string) error {
 	mode := a.secureCfg.VaultDecryptMode(absPath)
 
 	if mode == monban.DecryptLazyStrict {
-		hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+		hmacSalt, err := a.secureCfg.DecodeHmacSalt()
 		if err != nil {
-			return fmt.Errorf("decoding hmac salt: %w", err)
+			return err
 		}
 		lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, absPath)
 		if err != nil {
@@ -882,9 +854,9 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 	}
 	defer monban.ZeroBytes(masterSecret)
 
-	hmacSalt, err := monban.DecodeB64(a.secureCfg.HmacSalt)
+	hmacSalt, err := a.secureCfg.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 
 	switch {
