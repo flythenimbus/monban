@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,9 +50,9 @@ func (a *App) prepareAdditionalKey() (*monban.SecureConfig, []byte, []byte, erro
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("loading secure config: %w", err)
 	}
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("decoding hmac salt: %w", err)
+		return nil, nil, nil, err
 	}
 	return sc, hmacSalt, a.masterSecret, nil
 }
@@ -114,14 +113,8 @@ func (a *App) addFolder(absPath string, pin string) error {
 	if err != nil {
 		return fmt.Errorf("measuring folder: %w", err)
 	}
-	freeBytes, err := monban.FreeSpace(absPath)
-	if err != nil {
-		return fmt.Errorf("checking free space: %w", err)
-	}
-	if freeBytes < folderBytes {
-		needGB := float64(folderBytes) / (1024 * 1024 * 1024)
-		haveGB := float64(freeBytes) / (1024 * 1024 * 1024)
-		return fmt.Errorf("insufficient disk space: need %.1f GB free, have %.1f GB", needGB, haveGB)
+	if err := monban.ValidateDiskSpace(absPath, folderBytes); err != nil {
+		return err
 	}
 
 	masterSecret, err := a.fidoReauth(pin)
@@ -136,9 +129,9 @@ func (a *App) addFolder(absPath string, pin string) error {
 		Path:  absPath,
 	})
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving config: %w", err)
@@ -177,15 +170,8 @@ func (a *App) addFile(absPath string, pin string) error {
 		return fmt.Errorf("path is a directory: %s", absPath)
 	}
 
-	freeBytes, err := monban.FreeSpace(absPath)
-	if err != nil {
-		return fmt.Errorf("checking free space: %w", err)
-	}
-	fileSize := info.Size()
-	if freeBytes < fileSize {
-		needMB := float64(fileSize) / (1024 * 1024)
-		haveMB := float64(freeBytes) / (1024 * 1024)
-		return fmt.Errorf("insufficient disk space: need %.1f MB free, have %.1f MB", needMB, haveMB)
+	if err := monban.ValidateDiskSpace(absPath, info.Size()); err != nil {
+		return err
 	}
 
 	masterSecret, err := a.fidoReauth(pin)
@@ -201,9 +187,9 @@ func (a *App) addFile(absPath string, pin string) error {
 		Type:  "file",
 	})
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return fmt.Errorf("decoding hmac salt: %w", err)
+		return err
 	}
 	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
 		return fmt.Errorf("saving config: %w", err)
@@ -226,18 +212,14 @@ func (a *App) fidoReauth(pin string) ([]byte, error) {
 		return nil, fmt.Errorf("no credentials registered")
 	}
 
-	hmacSalt, err := monban.DecodeB64(sc.HmacSalt)
+	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return nil, fmt.Errorf("decoding hmac salt: %w", err)
+		return nil, err
 	}
 
-	credIDs := make([][]byte, len(sc.Credentials))
-	for i, c := range sc.Credentials {
-		id, err := monban.DecodeB64(c.CredentialID)
-		if err != nil {
-			return nil, fmt.Errorf("decoding credential ID: %w", err)
-		}
-		credIDs[i] = id
+	credIDs, err := sc.CollectCredentialIDs()
+	if err != nil {
+		return nil, err
 	}
 
 	assertion, err := monban.Assert(pin, credIDs, hmacSalt)
@@ -255,38 +237,12 @@ func (a *App) fidoReauth(pin string) ([]byte, error) {
 		return nil, err
 	}
 
-	var masterSecret []byte
-	var matchedCred *monban.CredentialEntry
-	for i := range sc.Credentials {
-		wrapped, err := monban.DecodeB64(sc.Credentials[i].WrappedKey)
-		if err != nil {
-			continue
-		}
-		secret, err := monban.UnwrapKey(wrappingKey, wrapped)
-		if err != nil {
-			continue
-		}
-		masterSecret = secret
-		matchedCred = &sc.Credentials[i]
-		break
+	masterSecret, matchedCred, err := monban.UnwrapMasterSecret(sc, wrappingKey)
+	if err != nil {
+		return nil, err
 	}
 
-	if masterSecret == nil {
-		return nil, fmt.Errorf("could not unwrap master secret — no matching credential found")
-	}
-
-	pubX, err := monban.DecodeB64(matchedCred.PublicKeyX)
-	if err != nil {
-		monban.ZeroBytes(masterSecret)
-		return nil, fmt.Errorf("decoding public key X: %w", err)
-	}
-	pubY, err := monban.DecodeB64(matchedCred.PublicKeyY)
-	if err != nil {
-		monban.ZeroBytes(masterSecret)
-		return nil, fmt.Errorf("decoding public key Y: %w", err)
-	}
-	cdh := sha256.Sum256(hmacSalt)
-	if err := monban.VerifyAssertion(sc.RpID, pubX, pubY, cdh[:], assertion.AuthDataCBOR, assertion.Sig); err != nil {
+	if err := monban.VerifyAssertionWithSalt(sc.RpID, matchedCred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err != nil {
 		monban.ZeroBytes(masterSecret)
 		return nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
