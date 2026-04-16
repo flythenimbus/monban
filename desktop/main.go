@@ -37,6 +37,7 @@ func main() {
 		},
 		OnShutdown: func() {
 			log.Println("monban: shutting down, locking vaults...")
+			app.StopIPCListener()
 			if err := app.Lock(); err != nil {
 				log.Printf("monban: error locking on shutdown: %v", err)
 			}
@@ -91,6 +92,7 @@ func main() {
 		installLaunchAgent()
 	}
 	app.StartDeviceWatcher()
+	app.StartIPCListener()
 
 	// Show window after app is running (hooks need the run loop active).
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {

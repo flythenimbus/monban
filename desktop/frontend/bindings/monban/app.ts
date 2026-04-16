@@ -21,6 +21,13 @@ export function AddPath(path: string, pin: string): $CancellablePromise<void> {
 }
 
 /**
+ * CancelIPCAuth is called when the user dismisses the IPC auth dialog.
+ */
+export function CancelIPCAuth(): $CancellablePromise<void> {
+    return $Call.ByID(1364085205);
+}
+
+/**
  * CheckDiskSpace returns disk space info for a folder.
  */
 export function CheckDiskSpace(path: string): $CancellablePromise<$models.DiskSpaceInfo> {
@@ -62,6 +69,15 @@ export function ExitFullscreen(): $CancellablePromise<void> {
 }
 
 /**
+ * GetAdminGateCommand returns the terminal command the user should run to
+ * install or remove the admin gate PAM config. Installs sudo gate on all
+ * platforms and authorization gate on macOS.
+ */
+export function GetAdminGateCommand(mode: string): $CancellablePromise<string> {
+    return $Call.ByID(603476286, mode);
+}
+
+/**
  * GetSettings returns settings from the secure config.
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
@@ -79,17 +95,22 @@ export function GetStatus(): $CancellablePromise<$models.AppStatus> {
     });
 }
 
-/**
- * GetSudoGateCommand returns the terminal command the user should run to
- * install or remove the sudo gate PAM config. On macOS Tahoe+, /etc/pam.d/
- * is TCC-protected and can only be written from Terminal with sudo.
- */
-export function GetSudoGateCommand(mode: string): $CancellablePromise<string> {
-    return $Call.ByID(2404724622, mode);
-}
-
 export function GetVersion(): $CancellablePromise<string> {
     return $Call.ByID(1049863377);
+}
+
+/**
+ * HandleIPCAuth is called by the frontend after the user enters their PIN.
+ */
+export function HandleIPCAuth(pin: string): $CancellablePromise<void> {
+    return $Call.ByID(4224414061, pin);
+}
+
+/**
+ * HideToTray hides the window back to the system tray.
+ */
+export function HideToTray(): $CancellablePromise<void> {
+    return $Call.ByID(2285725636);
 }
 
 export function IsLocked(): $CancellablePromise<boolean> {
@@ -172,6 +193,20 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
  */
 export function StartDeviceWatcher(): $CancellablePromise<void> {
     return $Call.ByID(1189108695);
+}
+
+/**
+ * StartIPCListener begins listening for IPC auth requests on a Unix socket.
+ */
+export function StartIPCListener(): $CancellablePromise<void> {
+    return $Call.ByID(968104967);
+}
+
+/**
+ * StopIPCListener shuts down the IPC listener and cleans up the socket.
+ */
+export function StopIPCListener(): $CancellablePromise<void> {
+    return $Call.ByID(3727891121);
 }
 
 /**

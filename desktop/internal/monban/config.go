@@ -39,7 +39,7 @@ type SecureConfig struct {
 	HmacSalt            string                 `json:"hmac_salt"` // base64url, 32 bytes, immutable after init
 	Credentials         []CredentialEntry      `json:"credentials"`
 	ForceAuthentication bool                   `json:"force_authentication"`
-	SudoGate            string                 `json:"sudo_gate"` // "off" (default), "default" (sufficient), "strict" (required)
+	AdminGate           string                 `json:"admin_gate"` // "off" (default), "default" (sufficient), "strict" (required)
 	VaultDecryptModes   map[string]DecryptMode `json:"vault_decrypt_modes,omitempty"`
 	ConfigHMAC          string                 `json:"config_hmac,omitempty"` // base64url HMAC-SHA256 over protected fields
 	ConfigCounter       uint64                 `json:"config_counter"`       // monotonic counter, incremented on every signed write
@@ -342,7 +342,7 @@ func configHMACPayload(sc *SecureConfig) string {
 
 	// Policy fields
 	fmt.Fprintf(&b, "force_authentication:%v\n", sc.ForceAuthentication)
-	fmt.Fprintf(&b, "sudo_gate:%s\n", sc.SudoGate)
+	fmt.Fprintf(&b, "admin_gate:%s\n", sc.AdminGate)
 
 	// Vault decrypt modes: sorted by path
 	if len(sc.VaultDecryptModes) > 0 {

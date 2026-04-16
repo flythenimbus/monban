@@ -3,7 +3,7 @@ import { useState } from "react";
 import { api } from "../../../api";
 import { Button, Input, PinAuth, Select, Toggle } from "../../../components";
 import { Folder } from "../../../components/icons/Folder";
-import type { SudoGateMode } from "../../../types";
+import type { GateMode } from "../../../types";
 import { friendlyError } from "../../../util/errors";
 import { useAdmin } from "../AdminContext";
 import { VaultRow } from "./VaultRow";
@@ -22,17 +22,17 @@ export function GeneralTab() {
 	} = useAdmin();
 	const [inputPath, setInputPath] = useState("");
 	const [addPending, setAddPending] = useState(false);
-	const [sudoCmd, setSudoCmd] = useState("");
+	const [gateCmd, setGateCmd] = useState("");
 	const [copied, setCopied] = useState(false);
 	const isMac = navigator.platform.startsWith("Mac");
 
-	const handleSudoGate = async (value: SudoGateMode) => {
-		onSetting("sudo_gate", value);
+	const handleAdminGate = async (value: GateMode) => {
+		onSetting("admin_gate", value);
 		try {
-			const cmd = await api.getSudoGateCommand(value);
-			setSudoCmd(cmd || "");
+			const cmd = await api.getAdminGateCommand(value);
+			setGateCmd(cmd || "");
 		} catch {
-			setSudoCmd("");
+			setGateCmd("");
 		}
 	};
 
@@ -96,17 +96,19 @@ export function GeneralTab() {
 						label="Force authentication"
 					/>
 				</div>
-				<div className="flex items-center justify-between px-4 py-3">
+				<div className="flex items-center justify-between gap-4 px-4 py-3">
 					<div>
-						<div className="text-sm font-medium text-text">Sudo gate</div>
+						<div className="text-sm font-medium text-text">Admin gate</div>
 						<div className="text-xs text-text-secondary">
-							Require security key for sudo
+							{isMac
+								? "Require security key for sudo and system admin actions"
+								: "Require security key for sudo"}
 						</div>
 					</div>
 					<Select
-						label="Sudo gate"
-						value={settings.sudo_gate || "off"}
-						onChange={(v) => handleSudoGate(v as SudoGateMode)}
+						label="Admin gate"
+						value={settings.admin_gate || "off"}
+						onChange={(v) => handleAdminGate(v as GateMode)}
 						disabled={!!pendingChange}
 						options={[
 							{ value: "off", label: "Off" },
@@ -124,19 +126,19 @@ export function GeneralTab() {
 						onCancel={cancelPendingChange}
 					/>
 				)}
-				{sudoCmd && (
+				{gateCmd && (
 					<div className="px-4 py-3">
 						<div className="text-xs text-text-secondary mb-2">
 							Run in Terminal to apply:
 						</div>
 						<div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
 							<code className="text-xs font-mono text-white/90 break-all flex-1">
-								{sudoCmd}
+								{gateCmd}
 							</code>
 							<button
 								type="button"
 								onClick={() => {
-									Clipboard.SetText(sudoCmd);
+									Clipboard.SetText(gateCmd);
 									setCopied(true);
 									setTimeout(() => setCopied(false), 2000);
 								}}

@@ -113,7 +113,7 @@ func TestSaveSecureConfigRoundTrip(t *testing.T) {
 		HmacSalt:            EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "c1", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		SudoGate:            "default",
+		AdminGate:            "default",
 		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test/docs"}},
 		OpenOnStartup:       true,
 	}
@@ -141,8 +141,8 @@ func TestSaveSecureConfigRoundTrip(t *testing.T) {
 	if loaded.ForceAuthentication != true {
 		t.Error("ForceAuthentication should be true")
 	}
-	if loaded.SudoGate != "default" {
-		t.Errorf("SudoGate: got %q, want %q", loaded.SudoGate, "default")
+	if loaded.AdminGate != "default" {
+		t.Errorf("AdminGate: got %q, want %q", loaded.AdminGate, "default")
 	}
 	if len(loaded.Vaults) != 1 {
 		t.Fatalf("expected 1 vault, got %d", len(loaded.Vaults))
@@ -286,7 +286,7 @@ func TestSignVerifySecureConfig(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		SudoGate:            "default",
+		AdminGate:            "default",
 		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test/docs"}},
 		OpenOnStartup:       true,
 	}
@@ -312,7 +312,7 @@ func TestVerifySecureConfigDetectsTampering(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		SudoGate:            "default",
+		AdminGate:            "default",
 	}
 
 	_ = SignSecureConfig(sc, master, salt)
@@ -416,7 +416,7 @@ func TestSignedSecureConfigSurvivesSaveLoadRoundTrip(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		SudoGate:            "strict",
+		AdminGate:            "strict",
 		VaultDecryptModes:   map[string]DecryptMode{"/vault": DecryptLazy},
 		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test/docs"}},
 		OpenOnStartup:       true,
@@ -439,7 +439,7 @@ func TestSignedSecureConfigSurvivesSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestVerifySecureConfigDetectsSudoGateTampering(t *testing.T) {
+func TestVerifySecureConfigDetectsAdminGateTampering(t *testing.T) {
 	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
 	salt := []byte("test-salt-32-bytes-long-enough!!")
 
@@ -448,14 +448,14 @@ func TestVerifySecureConfigDetectsSudoGateTampering(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		SudoGate:            "strict",
+		AdminGate:            "strict",
 	}
 
 	_ = SignSecureConfig(sc, master, salt)
 
-	sc.SudoGate = "off"
+	sc.AdminGate = "off"
 	if err := VerifySecureConfig(sc, master, salt); err != ErrConfigTampered {
-		t.Fatalf("expected ErrConfigTampered after sudo_gate change, got: %v", err)
+		t.Fatalf("expected ErrConfigTampered after admin_gate change, got: %v", err)
 	}
 }
 

@@ -164,7 +164,7 @@ vaults, credentials) requires a fresh FIDO2 assertion (PIN + touch).
     }
   ],
   "force_authentication": true,
-  "sudo_gate": "off",
+  "admin_gate": "off",
   "vaults": [
     { "label": "Documents", "path": "/home/alice/Documents" },
     { "label": "secret.txt", "path": "/home/alice/secret.txt", "type": "file" }
@@ -206,21 +206,39 @@ Every config write requires a fresh FIDO2 assertion (PIN + physical touch):
 settings changes, vault add/remove, key add/remove, decrypt mode changes.
 No mutation uses the in-memory master secret alone.
 
-## 9a. Sudo Gate (PAM Integration)
+## 9a. Admin Gate (PAM Integration)
 
-Monban can gate `sudo` behind YubiKey FIDO2 authentication via `pam_exec.so`.
+Monban can gate admin actions behind YubiKey FIDO2 authentication via
+`pam_exec.so`. A single `admin_gate` setting controls all gated services.
+
+Services gated:
+- **sudo** (`/etc/pam.d/sudo_local` on macOS, `/etc/pam.d/sudo` on Linux)
+- **authorization** (`/etc/pam.d/authorization` on macOS only) — gates the
+  native "enter your password" dialog used by System Settings, installer, etc.
+- **su** (`/etc/pam.d/su` on Linux, strict mode only)
 
 Modes:
 - **off** — no PAM integration
-- **default** — `auth sufficient` on sudo only — YubiKey success skips password, failure falls through
-- **strict** — `auth required` on both sudo and su — YubiKey must succeed, no password fallback. Also gates `/etc/pam.d/su` to prevent root user activation bypass.
+- **default** — `auth sufficient` — YubiKey success skips password, failure falls through
+- **strict** — `auth required` — YubiKey must succeed, no password fallback. Also gates su on Linux.
+
+IPC for GUI contexts:
+- The PAM helper tries `/dev/tty` first (terminal sudo). If no TTY is
+  available (e.g. macOS authorization dialog), it connects to the running
+  Monban app via a Unix socket IPC (`~/.config/monban/monban.sock`).
+- The app shows a PIN dialog overlay, performs the FIDO2 assertion, and
+  returns success/failure to the helper over the socket.
+- If the app is not running, the helper launches it via `open -a Monban`
+  and retries the connection.
 
 Components:
 - `cmd/pam-helper/` — standalone binary invoked by PAM, resolves invoking
   user's home via `PAM_USER`/`SUDO_USER` + `user.Lookup()`, reads secure config,
-  prompts for PIN via `/dev/tty`, performs FIDO2 assertion + signature verification
+  prompts for PIN via `/dev/tty` or IPC, performs FIDO2 assertion + signature verification
 - `internal/monban/pam.go` — PAM line install/removal with root escalation
-- `pam_darwin.go` / `pam_linux.go` — OS-specific privilege escalation
+- `internal/monban/ipc.go` — IPC protocol types and socket path helpers
+- `ipc.go` — Unix socket IPC listener (app side)
+- `pam_darwin.go` / `pam_linux.go` — OS-specific privilege escalation and PAM paths
 
 ## 10. Vault Types
 

@@ -13,6 +13,14 @@ tasks:
       - go build -trimpath -ldflags="-w -s" -o {{.BIN_DIR}}/monban-pam-helper ./cmd/pam-helper/
       - cc -shared -o {{.BIN_DIR}}/pam_monban.so cmd/pam-module/pam_monban.c -lpam
 
+  build:auth-plugin:
+    summary: Builds the macOS Authorization Plugin bundle
+    platforms: [darwin]
+    cmds:
+      - mkdir -p {{.BIN_DIR}}/monban-auth.bundle/Contents/MacOS
+      - cc -bundle -o {{.BIN_DIR}}/monban-auth.bundle/Contents/MacOS/monban-auth cmd/auth-plugin/monban_auth_plugin.m -framework Foundation -framework Security -framework SystemConfiguration
+      - cp cmd/auth-plugin/Info.plist {{.BIN_DIR}}/monban-auth.bundle/Contents/
+
   install:frontend:deps:
     summary: Install frontend dependencies
     dir: frontend
