@@ -57,8 +57,14 @@ export const api = {
 			pin,
 		),
 
-	getSudoGateCommand: (mode: string): Promise<string> =>
-		App.GetSudoGateCommand(mode),
+	getAdminGateCommand: (mode: string): Promise<string> =>
+		App.GetAdminGateCommand(mode),
+
+	handleIPCAuth: (pin: string): Promise<void> => App.HandleIPCAuth(pin),
+
+	cancelIPCAuth: (): Promise<void> => App.CancelIPCAuth(),
+
+	hideToTray: (): Promise<void> => App.HideToTray(),
 
 	revealSecureConfig: (): Promise<void> => App.RevealSecureConfig(),
 

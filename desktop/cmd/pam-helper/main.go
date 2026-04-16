@@ -1,5 +1,5 @@
 // monban-pam-helper is a standalone binary invoked by pam_exec.so to gate
-// sudo (and optionally ssh) behind a FIDO2 security key assertion.
+// sudo (and optionally authorization) behind a FIDO2 security key assertion.
 //
 // Usage:
 //
@@ -10,12 +10,17 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"monban/internal/monban"
 
@@ -23,10 +28,21 @@ import (
 )
 
 const (
-	installPath   = "/usr/local/bin/monban-pam-helper"
-	pamModuleDir  = "/usr/local/lib/pam"
-	pamModulePath = "/usr/local/lib/pam/pam_monban.so"
+	installPath      = "/usr/local/bin/monban-pam-helper"
+	pamModuleDir     = "/usr/local/lib/pam"
+	pamModulePath    = "/usr/local/lib/pam/pam_monban.so"
+	authPluginDir    = "/Library/Security/SecurityAgentPlugins"
+	authPluginName   = "monban-auth.bundle"
+	authPluginPath   = authPluginDir + "/" + authPluginName
+	authMechanismID  = "monban-auth:auth"
+	authBackupSuffix = ".monban-backup"
 )
+
+// Authorization rights that monban gates on macOS.
+var authorizationRights = []string{
+	"system.preferences",
+	"system.preferences.security",
+}
 
 func main() {
 	if len(os.Args) > 1 {
@@ -105,7 +121,7 @@ func install(mode string) error {
 		return fmt.Errorf("helper not found at %s after install", installPath)
 	}
 
-	// Write PAM config referencing the module.
+	// Write sudo PAM config referencing the module.
 	pamLine := fmt.Sprintf("auth %s %s %s\n",
 		pamMode, pamModulePath, monban.PamTag())
 
@@ -154,8 +170,152 @@ func install(mode string) error {
 		removePamTag(suPath)
 	}
 
+	// Install macOS Authorization Plugin (gates system admin dialogs).
+	if runtime.GOOS == "darwin" {
+		if err := installAuthPlugin(exe); err != nil {
+			fmt.Fprintf(os.Stderr, "monban: auth plugin install warning: %v\n", err)
+		}
+	}
+
 	return nil
 }
+
+
+// --- macOS Authorization Plugin ---
+
+func installAuthPlugin(exe string) error {
+	// Find the auth plugin bundle adjacent to the binary (inside .app bundle).
+	appDir := filepath.Dir(exe)
+	bundleSrc := filepath.Join(appDir, "..", "Resources", authPluginName)
+	if _, err := os.Stat(bundleSrc); err != nil {
+		// Try next to the binary (dev builds).
+		bundleSrc = filepath.Join(appDir, authPluginName)
+		if _, err := os.Stat(bundleSrc); err != nil {
+			return fmt.Errorf("auth plugin bundle not found near %s", exe)
+		}
+	}
+
+	// Copy bundle to /Library/Security/SecurityAgentPlugins/
+	if err := os.RemoveAll(authPluginPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing old auth plugin: %w", err)
+	}
+	if err := copyDir(bundleSrc, authPluginPath); err != nil {
+		return fmt.Errorf("copying auth plugin: %w", err)
+	}
+	fmt.Printf("Installed %s\n", authPluginPath)
+
+	// Modify authorization rights to use our plugin mechanism.
+	for _, right := range authorizationRights {
+		if err := addAuthMechanism(right); err != nil {
+			fmt.Fprintf(os.Stderr, "monban: warning: could not configure right %s: %v\n", right, err)
+		} else {
+			fmt.Printf("Configured authorization right: %s\n", right)
+		}
+	}
+
+	return nil
+}
+
+func uninstallAuthPlugin() {
+	// Restore authorization rights to their default (remove our mechanism).
+	for _, right := range authorizationRights {
+		if err := removeAuthMechanism(right); err != nil {
+			fmt.Fprintf(os.Stderr, "monban: warning: could not restore right %s: %v\n", right, err)
+		} else {
+			fmt.Printf("Restored authorization right: %s\n", right)
+		}
+	}
+
+	// Remove the plugin bundle.
+	if err := os.RemoveAll(authPluginPath); err != nil && !os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "monban: warning: could not remove auth plugin: %v\n", err)
+	} else {
+		fmt.Printf("Removed %s\n", authPluginPath)
+	}
+}
+
+// addAuthMechanism converts an authorization right from class:user (password-based)
+// to class:evaluate-mechanisms with our plugin, preserving a backup of the original.
+func addAuthMechanism(right string) error {
+	// Read current right.
+	out, err := exec.Command("security", "authorizationdb", "read", right).Output()
+	if err != nil {
+		return fmt.Errorf("reading right: %w", err)
+	}
+
+	// Save backup of original right.
+	backupPath := filepath.Join(authPluginDir, right+authBackupSuffix)
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		_ = os.WriteFile(backupPath, out, 0600)
+	}
+
+	// Build new right with evaluate-mechanisms class.
+	newRight := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>class</key>
+	<string>evaluate-mechanisms</string>
+	<key>comment</key>
+	<string>Monban: FIDO2 security key authentication</string>
+	<key>mechanisms</key>
+	<array>
+		<string>%s</string>
+	</array>
+	<key>shared</key>
+	<false/>
+	<key>tries</key>
+	<integer>3</integer>
+</dict>
+</plist>`, authMechanismID)
+
+	cmd := exec.Command("security", "authorizationdb", "write", right)
+	cmd.Stdin = strings.NewReader(newRight)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// removeAuthMechanism restores the original authorization right from backup.
+func removeAuthMechanism(right string) error {
+	backupPath := filepath.Join(authPluginDir, right+authBackupSuffix)
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading backup: %w", err)
+	}
+
+	cmd := exec.Command("security", "authorizationdb", "write", right)
+	cmd.Stdin = bytes.NewReader(data)
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("restoring right: %w", err)
+	}
+
+	_ = os.Remove(backupPath)
+	return nil
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode())
+	})
+}
+
+// --- File helpers ---
 
 func copyFile(src, dst string, mode os.FileMode) error {
 	data, err := os.ReadFile(src)
@@ -176,6 +336,11 @@ func uninstall() error {
 	// Clean monban line from su PAM config (don't delete the file — it has other entries).
 	removePamTag(monban.PamSuPath())
 
+	// Restore authorization rights and remove auth plugin (macOS).
+	if runtime.GOOS == "darwin" {
+		uninstallAuthPlugin()
+	}
+
 	for _, path := range []string{monban.PamSudoPath(), installPath, pamModulePath} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("removing %s: %w", path, err)
@@ -194,10 +359,11 @@ func removePamTag(path string) {
 	if err != nil {
 		return
 	}
+	tag := monban.PamTag()
 	lines := strings.Split(string(data), "\n")
 	filtered := make([]string, 0, len(lines))
 	for _, line := range lines {
-		if !strings.Contains(line, monban.PamTag()) {
+		if !strings.Contains(line, tag) {
 			filtered = append(filtered, line)
 		}
 	}
@@ -207,14 +373,26 @@ func removePamTag(path string) {
 
 // resolveUserConfigDir determines the invoking user's config directory.
 // When running as root via PAM, os.UserHomeDir() returns /var/root.
-// We use PAM_USER or SUDO_USER to find the real user's home.
+// We try multiple sources to find the real invoking user.
 func resolveUserConfigDir() error {
 	username := os.Getenv("PAM_USER")
 	if username == "" {
 		username = os.Getenv("SUDO_USER")
 	}
 	if username == "" {
-		return fmt.Errorf("cannot determine invoking user (PAM_USER and SUDO_USER unset)")
+		username = os.Getenv("USER")
+	}
+	if username == "" {
+		username = os.Getenv("LOGNAME")
+	}
+	// On macOS, the console owner is the logged-in user.
+	if username == "" || username == "root" {
+		if name := consoleUser(); name != "" {
+			username = name
+		}
+	}
+	if username == "" || username == "root" {
+		return fmt.Errorf("cannot determine invoking user (PAM_USER, SUDO_USER, USER all unset or root)")
 	}
 	u, err := user.Lookup(username)
 	if err != nil {
@@ -225,12 +403,41 @@ func resolveUserConfigDir() error {
 	return nil
 }
 
+// consoleUser returns the owner of /dev/console (the logged-in GUI user on macOS).
+func consoleUser() string {
+	info, err := os.Stat("/dev/console")
+	if err != nil {
+		return ""
+	}
+	// os.Stat returns *syscall.Stat_t via info.Sys()
+	if sys := info.Sys(); sys != nil {
+		if stat, ok := sys.(*syscall.Stat_t); ok {
+			u, err := user.LookupId(fmt.Sprintf("%d", stat.Uid))
+			if err == nil {
+				return u.Username
+			}
+		}
+	}
+	return ""
+}
+
 func authenticate() error {
-	// Resolve the invoking user's config directory (not root's).
 	if err := resolveUserConfigDir(); err != nil {
 		return err
 	}
 
+	// Try TTY-based auth first (works for terminal sudo).
+	tty, ttyErr := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if ttyErr == nil {
+		defer func() { _ = tty.Close() }()
+		return authenticateViaTTY(tty)
+	}
+
+	// No TTY — try IPC to the running Monban app (GUI authorization flow).
+	return authenticateViaIPC()
+}
+
+func authenticateViaTTY(tty *os.File) error {
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return fmt.Errorf("loading secure config: %w", err)
@@ -245,35 +452,25 @@ func authenticate() error {
 		return err
 	}
 
-	// Open /dev/tty for interactive PIN prompt (same technique as ssh).
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("opening /dev/tty: %w", err)
-	}
-	defer func() { _ = tty.Close() }()
-
 	_, _ = fmt.Fprint(tty, "monban: security key PIN: ")
 	pinBytes, err := term.ReadPassword(int(tty.Fd()))
-	_, _ = fmt.Fprintln(tty) // newline after hidden input
+	_, _ = fmt.Fprintln(tty)
 	if err != nil {
 		return fmt.Errorf("reading PIN: %w", err)
 	}
 	pin := strings.TrimSpace(string(pinBytes))
 
-	// Collect all credential IDs.
 	credIDs, err := sc.CollectCredentialIDs()
 	if err != nil {
 		return err
 	}
 
-	// Perform FIDO2 assertion — requires touch + PIN.
 	_, _ = fmt.Fprint(tty, "monban: touch your security key...\n")
 	assertion, err := monban.Assert(pin, credIDs, hmacSalt)
 	if err != nil {
 		return fmt.Errorf("FIDO2 assertion failed: %w", err)
 	}
 
-	// Find the matched credential and verify the signature.
 	var verified bool
 	for i := range sc.Credentials {
 		cred := &sc.Credentials[i]
@@ -293,4 +490,79 @@ func authenticate() error {
 
 	_, _ = fmt.Fprint(tty, "monban: authenticated\n")
 	return nil
+}
+
+func authenticateViaIPC() error {
+	sockPath := monban.IPCSocketPath()
+
+	conn, err := tryConnect(sockPath)
+	if err != nil {
+		// App not running — try launching it
+		if launchErr := launchApp(); launchErr != nil {
+			return fmt.Errorf("FIDO2 auth failed: no TTY and could not launch Monban: %w", launchErr)
+		}
+
+		conn, err = tryConnectWithRetry(sockPath, 5*time.Second)
+		if err != nil {
+			return fmt.Errorf("FIDO2 auth failed: could not connect to Monban after launch: %w", err)
+		}
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
+
+	pamUser := os.Getenv("PAM_USER")
+	if pamUser == "" {
+		pamUser = os.Getenv("SUDO_USER")
+	}
+	pamService := os.Getenv("PAM_SERVICE")
+
+	req := monban.IPCRequest{
+		Type:    "auth",
+		User:    pamUser,
+		Service: pamService,
+	}
+
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return fmt.Errorf("sending IPC request: %w", err)
+	}
+
+	var resp monban.IPCResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return fmt.Errorf("reading IPC response: %w", err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("auth denied: %s", resp.Error)
+	}
+
+	return nil
+}
+
+func tryConnect(sockPath string) (net.Conn, error) {
+	return net.DialTimeout("unix", sockPath, 2*time.Second)
+}
+
+func tryConnectWithRetry(sockPath string, timeout time.Duration) (net.Conn, error) {
+	deadline := time.Now().Add(timeout)
+	delay := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		conn, err := tryConnect(sockPath)
+		if err == nil {
+			return conn, nil
+		}
+		time.Sleep(delay)
+		if delay < 2*time.Second {
+			delay *= 2
+		}
+	}
+	return nil, fmt.Errorf("connection timed out")
+}
+
+func launchApp() error {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("open", "-a", "Monban").Start()
+	}
+	return exec.Command("monban").Start()
 }

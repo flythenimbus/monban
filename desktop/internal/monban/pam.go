@@ -90,6 +90,7 @@ func RemoveSudoGate() error {
 	return writeFilePrivileged(PamSudoPath(), content, 0644)
 }
 
+
 // BatchPrivilegedWrites performs multiple file writes in a single privilege
 // escalation. Each entry maps a destination path to its temp file source.
 // All files are written atomically — if the escalation fails, nothing changes.
