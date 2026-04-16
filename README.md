@@ -4,41 +4,44 @@
 
 # Monban
 
-Security key encryption for macOS and Linux.
+Lock your files with a security key. macOS and Linux.
 
-Monban encrypts your folders and individual files using AES-256-GCM, unlocked
-only by a FIDO2 security key assertion (PIN + physical touch). Everything is
-encrypted in place. No external runtime dependencies. The protection is real
-encryption, not just a hidden folder.
+Monban encrypts your stuff using AES-256-GCM. You unlock it with a FIDO2 security key - enter your PIN, tap the key. Files get encrypted right where they are. No extra dependencies. This is real encryption, not just hiding a folder.
 
 ## Features
 
-- **Universal security key support**: works with any FIDO2 key that supports the hmac-secret extension
-- **Multiple keys per vault**: register as many security keys as you want, so losing one doesn't mean losing access
-- **Post-login 2FA**: opt-in kiosk lock screen that requires security key authentication after OS sign-in
-- **File and folder encryption**: encrypt individual files or entire folders, all in place
-- **Lazy decryption**: choose per vault whether to decrypt eagerly on unlock, on demand, or on demand with re-authentication (PIN + touch)
-- **Protect sudo and su**: prevent privilege escalation without security key authentication
-- **Easy backup**: export your vault configuration to recover access and prevent lockout
+👉 **Any FIDO2 key works** - if it supports hmac-secret, you're good
+
+👉 **Multiple keys per vault** - register backups so losing one key isn't the end of the world
+
+👉 **Lock screen after login** - optional 2FA screen that blocks access until you tap your key
+
+👉 **Files or folders** - encrypt whatever you want, right in place
+
+👉 **Lazy mode** - vaults can stay locked until you actually need them, or require a fresh PIN + tap every time
+
+👉 **Admin gate** - sudo, su, and admin actions all require your security key
+
+👉 **Easy backup** - export your vault config so you don't get locked out
 
 ## How It Works
 
-1. Register your security key(s) through the app
-2. Add folders or individual files to protect
-3. On lock (app close, sleep, or logout), everything is encrypted in place
-4. On unlock, enter your PIN and touch the key to decrypt
-5. Optionally set vaults to lazy or strict mode — lazy vaults stay encrypted until you decrypt them on demand, strict vaults require a fresh PIN + touch each time
+1. Plug in your security key and register it
+2. Pick files or folders to protect
+3. When the app closes, your machine sleeps, or you log out - everything gets encrypted
+4. To unlock, enter your PIN and tap your key
+5. Want more control? Set vaults to lazy (decrypt on demand) or strict (fresh PIN + tap every time)
 
 ## Security
 
-- **Encryption**: AES-256-GCM with streaming 64KB chunks. Files never load fully into memory.
-- **Key derivation**: HKDF-SHA256 from the FIDO2 hmac-secret extension output. The secret never leaves the hardware.
-- **Key wrapping**: A random master secret is wrapped (AES-256-GCM) by each security key's derived key. Adding or removing keys never touches the encrypted files.
-- **Auto-lock**: Vaults lock on sleep, logout, app quit, and SIGTERM/SIGINT.
-- **Metadata protection**: Manifests are encrypted. Original filenames and directory structure are not visible when locked. Individual file vaults are stored in opaque directories with hashed names.
-- **Crash safety**: A write-ahead journal ensures files are never lost during lock/unlock, even on power failure.
-- **Per-vault strict keys**: Strict mode vaults use a unique encryption key derived per vault path. The key only exists in memory during an active re-authentication and is zeroed immediately after.
-- **No plaintext key material touches the filesystem.**
+- **Encryption** - AES-256-GCM, streamed in 64KB chunks. Files never fully load into memory.
+- **Key derivation** - HKDF-SHA256 from your key's hmac-secret output. The secret never leaves the hardware.
+- **Key wrapping** - a random master secret gets wrapped by each key. Adding or removing keys doesn't re-encrypt your files.
+- **Auto-lock** - vaults lock on sleep, logout, quit, and kill signals.
+- **Metadata hidden** - filenames and folder structure are invisible when locked. Single-file vaults use hashed names.
+- **Crash safe** - a write-ahead journal means files are never lost, even on power failure.
+- **Strict mode keys** - unique encryption key per vault, only lives in memory during auth, zeroed right after.
+- **No key material ever hits the filesystem in plaintext.**
 
 ## Supported Keys
 
@@ -52,16 +55,16 @@ encryption, not just a hidden folder.
 
 ## Projects
 
-- [`desktop/`](desktop/) - Desktop app (macOS, Linux) built with Wails v3, React, and Tailwind CSS v4
-- [`website/`](website/) - Marketing site built with Astro
+- [`desktop/`](desktop/) - Desktop app (macOS, Linux). Wails v3 + React + Tailwind v4.
+- [`website/`](website/) - Marketing site. Built with Astro.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue to discuss your idea before submitting a pull request.
+Want to help? Open an issue first so we can talk about it, then send a PR.
 
 ## Donate
 
-Monban is free and open source. If you find it useful, consider supporting development with Monero.
+Monban is free and open source. If it's useful to you, toss some Monero our way.
 
 <p align="center">
   <img src="website/public/monero.png" alt="Monero donation QR code" width="200" />
@@ -73,4 +76,4 @@ Monban is free and open source. If you find it useful, consider supporting devel
 
 ## License
 
-Monban is licensed under the [GNU General Public License v3.0](LICENSE).
+[GNU General Public License v3.0](LICENSE)
