@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -45,9 +45,9 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 	sc.AdminGate = settings.AdminGate
 
 	if settings.OpenOnStartup {
-		installLaunchAgent()
+		InstallLaunchAgent()
 	} else {
-		removeLaunchAgent()
+		RemoveLaunchAgent()
 	}
 
 	hmacSalt, err := sc.DecodeHmacSalt()
