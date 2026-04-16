@@ -1,4 +1,4 @@
-import * as App from "../bindings/monban/app";
+import * as App from "../bindings/monban/internal/app/app";
 import type {
 	AppStatus,
 	DiskSpaceInfo,

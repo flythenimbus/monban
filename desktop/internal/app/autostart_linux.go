@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package app
 
 import (
 	"fmt"
@@ -23,8 +23,8 @@ func launchAgentExists() bool {
 	return err == nil
 }
 
-// installLaunchAgent writes an XDG autostart .desktop file.
-func installLaunchAgent() {
+// InstallLaunchAgent writes an XDG autostart .desktop file.
+func InstallLaunchAgent() {
 	if launchAgentExists() {
 		return
 	}
@@ -61,8 +61,8 @@ Comment=Security key-based folder encryption
 	log.Println("monban: XDG autostart installed — will start on login")
 }
 
-// removeLaunchAgent removes the XDG autostart .desktop file.
-func removeLaunchAgent() {
+// RemoveLaunchAgent removes the XDG autostart .desktop file.
+func RemoveLaunchAgent() {
 	if !launchAgentExists() {
 		return
 	}

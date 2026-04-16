@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import * as App from "../../bindings/monban/app";
+import * as App from "../../bindings/monban/internal/app/app";
 
 const WIDTH = 420;
 const TITLEBAR = 50;

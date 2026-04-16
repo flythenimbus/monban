@@ -4,6 +4,8 @@ import (
 	"embed"
 	"log"
 
+	monbanapp "monban/internal/app"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -15,7 +17,7 @@ var assets embed.FS
 var trayIconBytes []byte
 
 func main() {
-	app := NewApp()
+	app := monbanapp.NewApp()
 
 	wailsApp := application.New(application.Options{
 		Name:        "Monban",
@@ -26,9 +28,8 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
-		Mac: platformAppOptions(),
+		Mac: monbanapp.PlatformAppOptions(),
 		ShouldQuit: func() bool {
-			// Block quit while locked with force authentication
 			if app.IsLocked() && app.GetSettings().ForceAuthentication {
 				log.Println("monban: quit blocked (force authentication active)")
 				return false
@@ -44,38 +45,34 @@ func main() {
 		},
 	})
 
-	// Create system tray first (before window)
 	systemTray := wailsApp.SystemTray.New()
-
-	platformConfigureTray(systemTray, trayIconBytes)
+	monbanapp.PlatformConfigureTray(systemTray, trayIconBytes)
 
 	win := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Monban",
-		Width:  420,
-		Height: 300,
-		MinWidth: 380,
-		MinHeight: 200,
-		Hidden: true,
-		Mac: platformWindowOptions(),
+		Title:            "Monban",
+		Width:            420,
+		Height:           300,
+		MinWidth:         380,
+		MinHeight:        200,
+		Hidden:           true,
+		Mac:              monbanapp.PlatformWindowOptions(),
 		BackgroundColour: application.NewRGB(245, 240, 235),
 		URL:              "/",
 	})
 
-	// Intercept close — if locked + force auth, prevent entirely; otherwise hide to tray
 	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		if app.IsLocked() && app.GetSettings().ForceAuthentication {
 			e.Cancel()
 			return
 		}
 		win.Hide()
-		HideFromDock()
+		monbanapp.HideFromDock()
 		e.Cancel()
 	})
 
-	// Tray menu
 	trayMenu := wailsApp.NewMenu()
 	trayMenu.Add("Open Monban").OnClick(func(ctx *application.Context) {
-		ShowInDock()
+		monbanapp.ShowInDock()
 		win.Show()
 		win.Focus()
 	})
@@ -87,14 +84,13 @@ func main() {
 
 	app.SetWindow(win)
 
-	RegisterHardeningHooks(app)
+	monbanapp.RegisterHardeningHooks(app)
 	if app.GetSettings().OpenOnStartup {
-		installLaunchAgent()
+		monbanapp.InstallLaunchAgent()
 	}
 	app.StartDeviceWatcher()
 	app.StartIPCListener()
 
-	// Show window after app is running (hooks need the run loop active).
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
 		if app.IsRegistered() {
 			settings := app.GetSettings()
@@ -102,7 +98,7 @@ func main() {
 				app.EnterFullscreen()
 			}
 		}
-		ShowInDock()
+		monbanapp.ShowInDock()
 		win.Show()
 		win.Focus()
 	})

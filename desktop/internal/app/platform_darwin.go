@@ -1,16 +1,16 @@
 //go:build darwin
 
-package main
+package app
 
 import "github.com/wailsapp/wails/v3/pkg/application"
 
-func platformAppOptions() application.MacOptions {
+func PlatformAppOptions() application.MacOptions {
 	return application.MacOptions{
 		ActivationPolicy: application.ActivationPolicyAccessory,
 	}
 }
 
-func platformWindowOptions() application.MacWindow {
+func PlatformWindowOptions() application.MacWindow {
 	return application.MacWindow{
 		InvisibleTitleBarHeight: 50,
 		Backdrop:                application.MacBackdropTranslucent,
@@ -18,6 +18,6 @@ func platformWindowOptions() application.MacWindow {
 	}
 }
 
-func platformConfigureTray(tray *application.SystemTray, icon []byte) {
+func PlatformConfigureTray(tray *application.SystemTray, icon []byte) {
 	tray.SetTemplateIcon(icon)
 }

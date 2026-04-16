@@ -1,6 +1,6 @@
 //go:build darwin
 
-package main
+package app
 
 import (
 	"fmt"
@@ -23,8 +23,8 @@ func launchAgentExists() bool {
 	return err == nil
 }
 
-// installLaunchAgent writes the plist and loads it.
-func installLaunchAgent() {
+// InstallLaunchAgent writes the plist and loads it.
+func InstallLaunchAgent() {
 	path := launchAgentPath()
 
 	if launchAgentExists() {
@@ -78,8 +78,8 @@ func installLaunchAgent() {
 	log.Println("monban: LaunchAgent installed — will start on login")
 }
 
-// removeLaunchAgent unloads and deletes the plist.
-func removeLaunchAgent() {
+// RemoveLaunchAgent unloads and deletes the plist.
+func RemoveLaunchAgent() {
 	path := launchAgentPath()
 	if !launchAgentExists() {
 		return
