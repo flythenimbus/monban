@@ -175,11 +175,18 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 var globalApp *App
+
+func init() {
+	exitKioskMode = darwinExitKioskMode
+	enterKioskMode = darwinEnterKioskMode
+	showInDock = darwinShowInDock
+	hideFromDock = darwinHideFromDock
+	hasAccessibilityPermission = darwinHasAccessibilityPermission
+	promptAccessibilityPermission = darwinPromptAccessibilityPermission
+}
 
 func RegisterHardeningHooks(app *App) {
 	globalApp = app
@@ -197,21 +204,17 @@ func RegisterHardeningHooks(app *App) {
 	}()
 }
 
-// HasAccessibilityPermission checks if accessibility is granted.
-func HasAccessibilityPermission() bool {
+func darwinHasAccessibilityPermission() bool {
 	return C.checkAccessibility() != 0
 }
 
-// PromptAccessibilityPermission shows the system dialog asking the user to grant access.
-func PromptAccessibilityPermission() bool {
+func darwinPromptAccessibilityPermission() bool {
 	return C.promptAccessibility() != 0
 }
 
-// EnterKioskMode activates full lockdown: hides dock, menu bar, blocks shortcuts.
-// Must run on the main thread (AppKit requirement).
-func EnterKioskMode() {
-	application.InvokeSync(func() {
-		log.Printf("monban: entering kiosk mode (accessibility=%v)", HasAccessibilityPermission())
+func darwinEnterKioskMode() {
+	invokeSync(func() {
+		log.Printf("monban: entering kiosk mode (accessibility=%v)", hasAccessibilityPermission())
 		C.enterKioskMode()
 		if C.startEventTap() != 0 {
 			log.Println("monban: could not start event tap (accessibility not granted?)")
@@ -221,25 +224,21 @@ func EnterKioskMode() {
 	})
 }
 
-// ExitKioskMode restores normal desktop behavior.
-// Must run on the main thread (AppKit requirement).
-func ExitKioskMode() {
-	application.InvokeSync(func() {
+func darwinExitKioskMode() {
+	invokeSync(func() {
 		C.stopEventTap()
 		C.exitKioskMode()
 	})
 }
 
-// ShowInDock switches to Regular activation policy so the app appears in the dock.
-func ShowInDock() {
-	application.InvokeSync(func() {
+func darwinShowInDock() {
+	invokeSync(func() {
 		C.showInDock()
 	})
 }
 
-// HideFromDock switches to Accessory activation policy so the app disappears from the dock.
-func HideFromDock() {
-	application.InvokeSync(func() {
+func darwinHideFromDock() {
+	invokeSync(func() {
 		C.hideFromDock()
 	})
 }

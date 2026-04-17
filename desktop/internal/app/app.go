@@ -62,7 +62,7 @@ func (a *App) SetWindow(w *application.WebviewWindow) {
 
 // ExitFullscreen switches the window to normal mode after unlock.
 func (a *App) ExitFullscreen() {
-	ExitKioskMode()
+	exitKioskMode()
 	if a.window != nil {
 		a.window.UnFullscreen()
 		a.window.SetSize(420, 300)
@@ -94,7 +94,7 @@ func (a *App) EnterFullscreen() {
 		a.window.SetMaximiseButtonState(application.ButtonHidden)
 		a.window.SetAlwaysOnTop(true)
 		a.window.Fullscreen()
-		EnterKioskMode()
+		enterKioskMode()
 	}
 }
 

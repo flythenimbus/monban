@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"monban/internal/monban"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const (
@@ -138,8 +136,8 @@ func (a *App) handleIPCConn(ctx context.Context, conn net.Conn) {
 			"service": req.Service,
 		})
 		time.Sleep(200 * time.Millisecond)
-		ShowInDock()
-		application.InvokeSync(func() {
+		showInDock()
+		invokeSync(func() {
 			a.window.Show()
 			a.window.Focus()
 		})
@@ -243,10 +241,10 @@ func (a *App) HideToTray() {
 		a.EnterFullscreen()
 		return
 	}
-	application.InvokeSync(func() {
+	invokeSync(func() {
 		a.window.Hide()
 	})
-	HideFromDock()
+	hideFromDock()
 }
 
 // CancelIPCAuth is called when the user dismisses the IPC auth dialog.

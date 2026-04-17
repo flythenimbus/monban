@@ -22,6 +22,7 @@ tasks:
     summary: Runs all tests
     cmds:
       - go test ./internal/monban/ -v
+      - go test ./internal/app/ -v
 
   lint:
     summary: Runs all linters
