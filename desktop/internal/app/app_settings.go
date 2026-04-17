@@ -59,8 +59,8 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 		return fmt.Errorf("applying settings: %w", err)
 	}
 
-	if settings.ForceAuthentication && !prevForceAuth && !HasAccessibilityPermission() {
-		PromptAccessibilityPermission()
+	if settings.ForceAuthentication && !prevForceAuth && !hasAccessibilityPermission() {
+		promptAccessibilityPermission()
 	}
 
 	return nil

@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+// shortSocketDir creates a temp directory under /tmp with a short name,
+// suitable for Unix domain sockets (macOS has a ~104-char path limit).
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "ipc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func TestIPCSocketPath(t *testing.T) {
 	dir := t.TempDir()
 	origDir := ConfigDir
@@ -209,7 +221,7 @@ func TestIPCProtocolOverSocket(t *testing.T) {
 
 // TestIPCProtocolOverSocketDenied verifies a denied auth response.
 func TestIPCProtocolOverSocketDenied(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortSocketDir(t)
 	sockPath := filepath.Join(dir, "test.sock")
 
 	listener, err := net.Listen("unix", sockPath)
@@ -255,7 +267,7 @@ func TestIPCProtocolOverSocketDenied(t *testing.T) {
 
 // TestIPCConcurrentConnectionsRejected verifies only one auth at a time.
 func TestIPCConcurrentConnectionsRejected(t *testing.T) {
-	dir := t.TempDir()
+	dir := shortSocketDir(t)
 	sockPath := filepath.Join(dir, "test.sock")
 
 	listener, err := net.Listen("unix", sockPath)

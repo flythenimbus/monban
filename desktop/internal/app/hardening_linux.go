@@ -33,13 +33,8 @@ func RegisterHardeningHooks(app *App) {
 	go watchSessionLock()
 }
 
-// Kiosk mode stubs for Linux (not yet implemented)
-func HasAccessibilityPermission() bool   { return false }
-func PromptAccessibilityPermission() bool { return false }
-func EnterKioskMode()                    {}
-func ExitKioskMode()                     {}
-func ShowInDock()                        {}
-func HideFromDock()                      {}
+// Linux stubs — platform_hooks.go defaults are already no-ops,
+// so no init() override needed.
 
 
 // watchSleep listens for systemd-logind PrepareForSleep signals.
