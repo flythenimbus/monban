@@ -20,7 +20,7 @@ Monban encrypts your stuff using AES-256-GCM. You unlock it with a FIDO2 securit
 
 👉 **Lazy mode** - vaults can stay locked until you actually need them, or require a fresh PIN + tap every time
 
-👉 **Admin gate** - sudo, su, and admin actions all require your security key
+👉 **Admin gate** - sudo and system admin dialogs require your security key (su too, with a bit of recovery-mode setup — see below)
 
 👉 **Easy backup** - export your vault config so you don't get locked out
 
@@ -52,6 +52,27 @@ Monban encrypts your stuff using AES-256-GCM. You unlock it with a FIDO2 securit
 - SoloKeys
 - Feitian (BioPass, ePass)
 - OnlyKey
+
+## Advanced Hardening (macOS only)
+
+By default the installer can't touch `/etc/pam.d/su`. Apple locks it behind SIP. That leaves one escalation path open: if an attacker knows your login password, they can run `dsenableroot` (we can't gate it since Apple's code crashes when we try) and then `su -` into root without ever touching your key.
+
+Closing that path requires a one-time trip through Recovery Mode. You're accepting a weaker SIP stance in exchange for a stricter root boundary. If you lose your key, you'll need the same recovery-mode trip to back out.
+
+1. Reboot holding the power button, pick **Options** → **Continue**.
+2. Utilities → Terminal → `csrutil authenticated-root disable`, enter your password, reboot.
+3. Back in macOS: `sudo mount -uw /`
+4. Append the same gate line to su's PAM config:
+   ```
+   echo 'auth sufficient /usr/local/lib/pam/pam_monban.so # monban su gate' \
+     | sudo tee -a /etc/pam.d/su > /dev/null
+   ```
+5. Reseal the system snapshot: `sudo bless --folder /System/Library/CoreServices --bootefi --create-snapshot`
+6. Reboot.
+
+Now `su` requires your key too. `dsenableroot` can still set a root password, but the password alone won't let anyone become root - they'd need to tap your key. Major macOS upgrades reset `/etc/pam.d/su`; you'll need to redo steps 3-6 after them.
+
+To undo: same dance, but edit the file to remove the monban line (or re-enable SIP with `csrutil enable`).
 
 ## Projects
 

@@ -40,12 +40,9 @@ export interface DiskSpaceInfo {
 	safe_to_migrate: boolean;
 }
 
-export type GateMode = "off" | "default" | "strict";
-
 export interface Settings {
 	open_on_startup: boolean;
 	force_authentication: boolean;
-	admin_gate: GateMode;
 }
 
 export interface UpdateInfo {

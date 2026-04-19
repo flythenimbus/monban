@@ -45,7 +45,6 @@ export class AppStatus {
 export class CombinedSettings {
     "open_on_startup": boolean;
     "force_authentication": boolean;
-    "admin_gate": string;
 
     /** Creates a new CombinedSettings instance. */
     constructor($$source: Partial<CombinedSettings> = {}) {
@@ -54,9 +53,6 @@ export class CombinedSettings {
         }
         if (!("force_authentication" in $$source)) {
             this["force_authentication"] = false;
-        }
-        if (!("admin_gate" in $$source)) {
-            this["admin_gate"] = "";
         }
 
         Object.assign(this, $$source);

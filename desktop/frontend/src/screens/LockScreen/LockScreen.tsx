@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../api";
 import {
 	Alert,
@@ -9,6 +9,7 @@ import {
 	StatusText,
 } from "../../components";
 import { useAutoResize } from "../../hooks/useAutoResize";
+import { useDevicePolling } from "../../hooks/useDevicePolling";
 import type { LockState, Settings } from "../../types";
 import { friendlyError } from "../../util/errors";
 
@@ -22,26 +23,13 @@ export function LockScreen({ onUnlock }: Props) {
 	const [pin, setPin] = useState("");
 	const [error, setError] = useState("");
 	const [forceAuth, setForceAuth] = useState(true);
-	const [deviceConnected, setDeviceConnected] = useState(false);
-	const pollRef = useRef<ReturnType<typeof setInterval>>();
+	const deviceConnected = useDevicePolling();
 
 	useEffect(() => {
 		api
 			.getSettings()
 			.then((s: Settings) => setForceAuth(s.force_authentication))
 			.catch(() => {});
-	}, []);
-
-	useEffect(() => {
-		const check = () => {
-			api
-				.detectDevice()
-				.then(setDeviceConnected)
-				.catch(() => setDeviceConnected(false));
-		};
-		check();
-		pollRef.current = setInterval(check, 2000);
-		return () => clearInterval(pollRef.current);
 	}, []);
 
 	const handleUnlock = async () => {

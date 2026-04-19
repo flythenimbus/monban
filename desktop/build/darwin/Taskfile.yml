@@ -122,18 +122,20 @@ tasks:
       - rm -f "{{.BIN_DIR}}/{{.APP_NAME}}-amd64" "{{.BIN_DIR}}/{{.APP_NAME}}-arm64"
 
   package:
-    summary: Packages the application into a `.app` bundle
+    summary: Packages the application into a `.app` bundle and an unsigned .pkg installer
     deps:
       - task: build
     cmds:
       - task: create:app:bundle
+      - task: pkg
 
   package:universal:
-    summary: Packages darwin universal binary (arm64 + amd64)
+    summary: Packages darwin universal binary (arm64 + amd64) and an unsigned .pkg installer
     deps:
       - task: build:universal
     cmds:
       - task: create:app:bundle
+      - task: pkg
 
 
   create:app:bundle:
@@ -203,6 +205,66 @@ tasks:
     preconditions:
       - sh: '[ -n "{{.SIGN_IDENTITY}}" ]'
         msg: "SIGN_IDENTITY is required. Set it in the vars section at the top of build/darwin/Taskfile.yml"
+
+  pkg:
+    summary: Builds an unsigned .pkg installer from the .app bundle and standalone helper/module/plugin
+    desc: |
+      Assembles a macOS installer package that places:
+        /Applications/Monban.app
+        /usr/local/bin/monban-pam-helper
+        /usr/local/lib/pam/pam_monban.so
+        /Library/Security/SecurityAgentPlugins/monban-auth.bundle
+
+      Requires the universal .app bundle and standalone helper/module/plugin to
+      already exist in {{.BIN_DIR}}/. Run `task darwin:package:universal` first
+      for a local build, or rely on CI which builds components before calling pkg.
+
+      Pass VERSION to stamp the installer and its filename:
+        task darwin:pkg VERSION=1.2.3
+    vars:
+      VERSION: '{{.VERSION | default "0.0.0"}}'
+      PKG_ROOT: "{{.BIN_DIR}}/pkg-root"
+      COMPONENT_PKG: "{{.BIN_DIR}}/Monban-component.pkg"
+      FINAL_PKG: "{{.BIN_DIR}}/Monban-{{.VERSION}}.pkg"
+    preconditions:
+      - sh: '[ -d "{{.BIN_DIR}}/{{.APP_NAME}}.app" ]'
+        msg: "Missing {{.BIN_DIR}}/{{.APP_NAME}}.app — run `task darwin:package:universal` first."
+      - sh: '[ -f "{{.BIN_DIR}}/monban-pam-helper" ]'
+        msg: "Missing {{.BIN_DIR}}/monban-pam-helper — run `task common:build:pam-helper` first."
+      - sh: '[ -f "{{.BIN_DIR}}/pam_monban.so" ]'
+        msg: "Missing {{.BIN_DIR}}/pam_monban.so — run `task common:build:pam-helper` first."
+      - sh: '[ -d "{{.BIN_DIR}}/monban-auth.bundle" ]'
+        msg: "Missing {{.BIN_DIR}}/monban-auth.bundle — run `task common:build:auth-plugin` first."
+    cmds:
+      - rm -rf "{{.PKG_ROOT}}"
+      - mkdir -p "{{.PKG_ROOT}}/Applications"
+      - mkdir -p "{{.PKG_ROOT}}/usr/local/bin"
+      - mkdir -p "{{.PKG_ROOT}}/usr/local/lib/pam"
+      - mkdir -p "{{.PKG_ROOT}}/Library/Security/SecurityAgentPlugins"
+      - cp -R "{{.BIN_DIR}}/{{.APP_NAME}}.app" "{{.PKG_ROOT}}/Applications/"
+      - cp "{{.BIN_DIR}}/monban-pam-helper" "{{.PKG_ROOT}}/usr/local/bin/"
+      - cp "{{.BIN_DIR}}/pam_monban.so" "{{.PKG_ROOT}}/usr/local/lib/pam/"
+      - cp -R "{{.BIN_DIR}}/monban-auth.bundle" "{{.PKG_ROOT}}/Library/Security/SecurityAgentPlugins/"
+      - cp ../LICENSE build/darwin/pkg/resources/license.txt
+      # Disable bundle relocation. Without this, Installer.app sees any
+      # existing bundle with the same CFBundleIdentifier (e.g. a dev build
+      # in ./bin) and redirects the payload there instead of /Applications.
+      - pkgbuild --analyze --root "{{.PKG_ROOT}}" "{{.BIN_DIR}}/monban-components.plist"
+      - |
+        # Force BundleIsRelocatable=false on every real bundle entry in the
+        # plist. We probe for RootRelativeBundlePath first so we don't create
+        # empty dicts at indices past the last real entry — which would break
+        # pkgbuild. Upper bound of 8 comfortably covers our payload.
+        for i in 0 1 2 3 4 5 6 7; do
+          /usr/libexec/PlistBuddy -c "Print :$i:RootRelativeBundlePath" "{{.BIN_DIR}}/monban-components.plist" >/dev/null 2>&1 || continue
+          /usr/libexec/PlistBuddy -c "Delete :$i:BundleIsRelocatable" "{{.BIN_DIR}}/monban-components.plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :$i:BundleIsRelocatable bool false" "{{.BIN_DIR}}/monban-components.plist"
+        done
+      - pkgbuild --root "{{.PKG_ROOT}}" --component-plist "{{.BIN_DIR}}/monban-components.plist" --identifier com.monban.pkg --version "{{.VERSION}}" --scripts build/darwin/pkg/scripts --install-location / "{{.COMPONENT_PKG}}"
+      - productbuild --distribution build/darwin/pkg/distribution.xml --resources build/darwin/pkg/resources --package-path "{{.BIN_DIR}}" "{{.FINAL_PKG}}"
+      - rm "{{.COMPONENT_PKG}}" "{{.BIN_DIR}}/monban-components.plist"
+      - rm -rf "{{.PKG_ROOT}}"
+      - 'echo "Built {{.FINAL_PKG}}"'
 
   sign:notarize:
     summary: Signs and notarizes the application bundle

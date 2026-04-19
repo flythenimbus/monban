@@ -21,6 +21,18 @@ function App() {
 
 	const checkState = useCallback(async () => {
 		try {
+			// A pending IPC auth request (typically from the authorization
+			// plugin triggered by a system-level admin prompt) takes priority
+			// over every other view. Handles the cold-start race where the
+			// plugin connected and emitted the event before Events.On was
+			// subscribed.
+			const pending = await api.getPendingIPCAuth();
+			if (pending) {
+				setIpcAuth(pending);
+				setView("ipc-auth");
+				return;
+			}
+
 			const status = await api.getStatus();
 			if (!status.registered) {
 				setView("setup");
@@ -41,8 +53,10 @@ function App() {
 			setRollbackWarning(true),
 		);
 		const offIpcAuth = Events.On("ipc:auth-request", (event: { data: IPCAuthRequest }) => {
+			console.log("[ipc] received ipc:auth-request", event.data);
 			setIpcAuth(event.data);
 			setView((prev) => {
+				console.log("[ipc] switching view from", prev, "to ipc-auth");
 				setPreviousView(prev);
 				return "ipc-auth";
 			});

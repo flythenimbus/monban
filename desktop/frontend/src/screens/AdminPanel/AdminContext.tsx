@@ -15,7 +15,6 @@ import { friendlyError } from "../../util/errors";
 const secureSettingKeys: Set<keyof Settings> = new Set([
 	"open_on_startup",
 	"force_authentication",
-	"admin_gate",
 ]);
 
 interface PendingSettingsChange {
@@ -51,7 +50,6 @@ export function useAdmin(): AdminContextValue {
 const defaultSettings: Settings = {
 	open_on_startup: true,
 	force_authentication: true,
-	admin_gate: "off",
 };
 
 export function AdminProvider({ children }: { children: ReactNode }) {

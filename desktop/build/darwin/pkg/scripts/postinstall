@@ -1,0 +1,89 @@
+#!/bin/bash
+# postinstall — finalises permissions on pkg payload and configures the
+# system-wide gates (PAM sudo rule + authorizationdb rebind). Runs as root
+# under macOS Installer.app, which is the ONLY context on macOS Tahoe with
+# kernel-level permission to write /etc/pam.d/.
+#
+# Once this script runs, sudo and native admin dialogs require a YubiKey via
+# the installed pam_monban.so and monban-auth.bundle. To disable, uninstall
+# the pkg (see README for steps).
+
+set -e
+
+# --- File ownership / perms -----------------------------------------------
+
+chmod 0755 /usr/local/bin/monban-pam-helper
+chmod 0644 /usr/local/lib/pam/pam_monban.so
+chmod -R a+rX /Library/Security/SecurityAgentPlugins/monban-auth.bundle
+
+# --- /etc/pam.d/sudo_local ------------------------------------------------
+
+# `sufficient` means pam_monban.so success grants sudo (skipping password),
+# failure falls through to the normal password prompt. Upgrade to a bracketed
+# `auth_err=die` control flag later if we want no-fallback strict semantics.
+cat > /etc/pam.d/sudo_local <<EOF
+auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate
+EOF
+chmod 0444 /etc/pam.d/sudo_local
+
+# --- authorizationdb rebind ----------------------------------------------
+
+# Save a backup of each right the first time we rebind, and replace it with
+# a class=evaluate-mechanisms entry pointing at the monban-auth plugin.
+# If the backup already exists we leave it alone so repeat installs don't
+# clobber the original system default.
+
+AUTH_BACKUP_DIR=/Library/Security/SecurityAgentPlugins
+AUTH_MECH_PLIST='<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>class</key>
+    <string>evaluate-mechanisms</string>
+    <key>comment</key>
+    <string>Monban: FIDO2 security key authentication</string>
+    <key>mechanisms</key>
+    <array>
+        <string>monban-auth:auth</string>
+    </array>
+    <key>shared</key>
+    <true/>
+    <key>timeout</key>
+    <integer>300</integer>
+    <key>tries</key>
+    <integer>1</integer>
+</dict>
+</plist>'
+
+# Load the canonical GATED_RIGHTS list (shared with test_install.sh).
+# pkgbuild copies every file in the scripts/ dir into the pkg, so this
+# file ends up alongside postinstall at install time.
+. "$(dirname "$0")/gated-rights.sh"
+
+# Before (re)binding, reclaim any rights from a previous install that are no
+# longer in the gated list — restore them to Apple defaults from their backup.
+# Handles the case where an earlier pkg gated a right we've since decided we
+# can't safely replace (e.g. operations that require a real password).
+for backup in "$AUTH_BACKUP_DIR"/*.monban-backup; do
+    [ -f "$backup" ] || continue
+    right=$(basename "$backup" .monban-backup)
+    still_gated=0
+    for g in "${GATED_RIGHTS[@]}"; do
+        [ "$g" = "$right" ] && { still_gated=1; break; }
+    done
+    if [ "$still_gated" -eq 0 ]; then
+        security authorizationdb write "$right" < "$backup" 2>/dev/null || true
+        rm -f "$backup"
+    fi
+done
+
+for right in "${GATED_RIGHTS[@]}"; do
+    backup="$AUTH_BACKUP_DIR/$right.monban-backup"
+    if [ ! -f "$backup" ]; then
+        security authorizationdb read "$right" > "$backup" 2>/dev/null \
+            && chmod 0600 "$backup"
+    fi
+    printf '%s' "$AUTH_MECH_PLIST" | security authorizationdb write "$right" 2>/dev/null || true
+done
+
+exit 0

@@ -1,0 +1,10 @@
+#!/bin/bash
+# preinstall — prepares the system for a Monban (re)install.
+# Runs as root under macOS Installer.app.
+
+set -e
+
+# Quit a running Monban so its binaries can be replaced without "file in use".
+pkill -x Monban 2>/dev/null || true
+
+exit 0

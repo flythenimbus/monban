@@ -52,6 +52,10 @@ func InstallLaunchAgent() {
     <true/>
     <key>KeepAlive</key>
     <false/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>AbandonProcessGroup</key>
+    <true/>
     <key>StandardErrorPath</key>
     <string>/tmp/monban.err</string>
 </dict>

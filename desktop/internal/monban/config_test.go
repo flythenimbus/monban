@@ -113,7 +113,6 @@ func TestSaveSecureConfigRoundTrip(t *testing.T) {
 		HmacSalt:            EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "c1", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		AdminGate:            "default",
 		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test/docs"}},
 		OpenOnStartup:       true,
 	}
@@ -140,9 +139,6 @@ func TestSaveSecureConfigRoundTrip(t *testing.T) {
 	}
 	if loaded.ForceAuthentication != true {
 		t.Error("ForceAuthentication should be true")
-	}
-	if loaded.AdminGate != "default" {
-		t.Errorf("AdminGate: got %q, want %q", loaded.AdminGate, "default")
 	}
 	if len(loaded.Vaults) != 1 {
 		t.Fatalf("expected 1 vault, got %d", len(loaded.Vaults))
@@ -286,7 +282,6 @@ func TestSignVerifySecureConfig(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		AdminGate:            "default",
 		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test/docs"}},
 		OpenOnStartup:       true,
 	}
@@ -312,7 +307,6 @@ func TestVerifySecureConfigDetectsTampering(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		AdminGate:            "default",
 	}
 
 	_ = SignSecureConfig(sc, master, salt)
@@ -416,7 +410,6 @@ func TestSignedSecureConfigSurvivesSaveLoadRoundTrip(t *testing.T) {
 		HmacSalt:            EncodeB64(salt),
 		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
 		ForceAuthentication: true,
-		AdminGate:            "strict",
 		VaultDecryptModes:   map[string]DecryptMode{"/vault": DecryptLazy},
 		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test/docs"}},
 		OpenOnStartup:       true,
@@ -436,26 +429,6 @@ func TestSignedSecureConfigSurvivesSaveLoadRoundTrip(t *testing.T) {
 
 	if err := VerifySecureConfig(loaded, master, salt); err != nil {
 		t.Fatalf("HMAC should verify after save/load round-trip: %v", err)
-	}
-}
-
-func TestVerifySecureConfigDetectsAdminGateTampering(t *testing.T) {
-	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
-	salt := []byte("test-salt-32-bytes-long-enough!!")
-
-	sc := &SecureConfig{
-		RpID:                "monban.local",
-		HmacSalt:            EncodeB64(salt),
-		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
-		ForceAuthentication: true,
-		AdminGate:            "strict",
-	}
-
-	_ = SignSecureConfig(sc, master, salt)
-
-	sc.AdminGate = "off"
-	if err := VerifySecureConfig(sc, master, salt); err != ErrConfigTampered {
-		t.Fatalf("expected ErrConfigTampered after admin_gate change, got: %v", err)
 	}
 }
 

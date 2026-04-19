@@ -37,9 +37,8 @@ type DiskSpaceInfo struct {
 // CombinedSettings is the frontend-facing settings object.
 // All fields are stored in the HMAC-signed secure config.
 type CombinedSettings struct {
-	OpenOnStartup       bool   `json:"open_on_startup"`
-	ForceAuthentication bool   `json:"force_authentication"`
-	AdminGate           string `json:"admin_gate"`
+	OpenOnStartup       bool `json:"open_on_startup"`
+	ForceAuthentication bool `json:"force_authentication"`
 }
 
 type App struct {

@@ -72,9 +72,11 @@ export function friendlyError(err: unknown): string {
 	for (const [pattern, friendly] of errorMap) {
 		if (pattern.test(raw)) return friendly;
 	}
-	// Fallback: strip Go error chain prefixes like "registration failed: MakeCredential: "
-	const parts = raw.split(": ");
-	return parts[parts.length - 1] || raw;
+	// Unmapped error: surface the raw to the devtools console so it's
+	// inspectable during development, but show the user a generic message
+	// instead of leaking JSON blobs or Go stack traces.
+	console.error("[monban] unmapped error:", raw, err);
+	return "Something went wrong. Please try again.";
 }
 
 function extractMessage(err: unknown): string {

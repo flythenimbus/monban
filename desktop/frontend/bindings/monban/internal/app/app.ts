@@ -8,6 +8,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as application$0 from "../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as monban$0 from "../monban/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -69,12 +72,15 @@ export function ExitFullscreen(): $CancellablePromise<void> {
 }
 
 /**
- * GetAdminGateCommand returns the terminal command the user should run to
- * install or remove the admin gate. Installs sudo PAM gate on all platforms
- * and the authorization plugin on macOS.
+ * GetPendingIPCAuth returns a snapshot of the current in-flight IPC auth
+ * request, or nil if none is active. Called by the frontend on mount to
+ * handle the cold-start case where the plugin connected before Events.On
+ * subscribed to ipc:auth-request.
  */
-export function GetAdminGateCommand(mode: string): $CancellablePromise<string> {
-    return $Call.ByID(1430585252, mode);
+export function GetPendingIPCAuth(): $CancellablePromise<monban$0.IPCRequest | null> {
+    return $Call.ByID(163305684).then(($result: any) => {
+        return $$createType3($result);
+    });
 }
 
 /**
@@ -82,7 +88,7 @@ export function GetAdminGateCommand(mode: string): $CancellablePromise<string> {
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
     return $Call.ByID(3129821644).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
 }
 
@@ -91,7 +97,7 @@ export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
  */
 export function GetStatus(): $CancellablePromise<$models.AppStatus> {
     return $Call.ByID(779018179).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType5($result);
     });
 }
 
@@ -127,7 +133,7 @@ export function IsRegistered(): $CancellablePromise<boolean> {
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(257323087).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -220,6 +226,10 @@ export function Unlock(pin: string): $CancellablePromise<void> {
 /**
  * UpdateSettings saves all settings to the HMAC-signed secure config.
  * All changes require a fresh FIDO2 assertion (PIN + touch).
+ * 
+ * Note: admin_gate (sudo / admin-dialog gating) is no longer a runtime setting
+ * on macOS — it is configured once at pkg install time. See plans/macos_install.md
+ * Phase 2.5 for the rationale.
  */
 export function UpdateSettings(settings: $models.CombinedSettings, pin: string): $CancellablePromise<void> {
     return $Call.ByID(3263880691, settings, pin);
@@ -235,7 +245,9 @@ export function UpdateVaultMode(path: string, mode: string, pin: string): $Cance
 // Private type creation functions
 const $$createType0 = $models.DiskSpaceInfo.createFrom;
 const $$createType1 = $models.UpdateInfo.createFrom;
-const $$createType2 = $models.CombinedSettings.createFrom;
-const $$createType3 = $models.AppStatus.createFrom;
-const $$createType4 = $models.KeyInfo.createFrom;
-const $$createType5 = $Create.Array($$createType4);
+const $$createType2 = monban$0.IPCRequest.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $models.CombinedSettings.createFrom;
+const $$createType5 = $models.AppStatus.createFrom;
+const $$createType6 = $models.KeyInfo.createFrom;
+const $$createType7 = $Create.Array($$createType6);
