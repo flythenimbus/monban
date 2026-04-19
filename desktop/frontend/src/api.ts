@@ -57,12 +57,14 @@ export const api = {
 			pin,
 		),
 
-	getAdminGateCommand: (mode: string): Promise<string> =>
-		App.GetAdminGateCommand(mode),
-
 	handleIPCAuth: (pin: string): Promise<void> => App.HandleIPCAuth(pin),
 
 	cancelIPCAuth: (): Promise<void> => App.CancelIPCAuth(),
+
+	getPendingIPCAuth: (): Promise<{ user: string; service: string } | null> =>
+		App.GetPendingIPCAuth() as unknown as Promise<
+			{ user: string; service: string } | null
+		>,
 
 	hideToTray: (): Promise<void> => App.HideToTray(),
 

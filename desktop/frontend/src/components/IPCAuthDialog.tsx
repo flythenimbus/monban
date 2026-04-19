@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
 import { useAutoResize } from "../hooks/useAutoResize";
+import { useDevicePolling } from "../hooks/useDevicePolling";
 import { friendlyError } from "../util/errors";
 import { Alert } from "./Alert";
 import { Button } from "./Button";
@@ -25,6 +26,7 @@ export function IPCAuthDialog({ service, user, onDone }: IPCAuthDialogProps) {
 	const [pin, setPin] = useState("");
 	const [state, setState] = useState<AuthState>("idle");
 	const [error, setError] = useState("");
+	const deviceConnected = useDevicePolling();
 
 	const label = serviceLabels[service] || service || "Authentication";
 
@@ -48,6 +50,28 @@ export function IPCAuthDialog({ service, user, onDone }: IPCAuthDialogProps) {
 		onDone();
 	};
 
+	const pinForm = (
+		<>
+			<Input
+				type="password"
+				label="Security key PIN"
+				placeholder="Security key PIN"
+				value={pin}
+				onChange={(e) => setPin(e.target.value)}
+				onKeyDown={(e) => e.key === "Enter" && pin && handleSubmit()}
+				autoFocus
+			/>
+			<div className="flex gap-2">
+				<Button onClick={handleSubmit} disabled={!pin} className="flex-1">
+					Authenticate
+				</Button>
+				<Button variant="secondary" onClick={handleCancel} className="flex-1">
+					Cancel
+				</Button>
+			</div>
+		</>
+	);
+
 	return (
 		<div
 			ref={contentRef}
@@ -62,15 +86,21 @@ export function IPCAuthDialog({ service, user, onDone }: IPCAuthDialogProps) {
 					<h1 className="text-lg font-semibold text-text">
 						{label} requested
 					</h1>
-					<p className="text-text-secondary text-sm mt-1">
-						{user ? `For user ${user} — ` : ""}Enter PIN and touch your
-						security key
+					<p aria-live="polite" className="text-text-secondary text-sm mt-1">
+						{!deviceConnected
+							? "Insert your security key to continue"
+							: `${user ? `For user ${user} — ` : ""}Enter PIN and touch your security key`}
 					</p>
 				</div>
 
-				{state === "error" && <Alert>{error}</Alert>}
-
-				{state === "waiting_touch" ? (
+				{!deviceConnected ? (
+					<>
+						<StatusText pulse>Waiting for security key...</StatusText>
+						<Button variant="secondary" onClick={handleCancel}>
+							Cancel
+						</Button>
+					</>
+				) : state === "waiting_touch" ? (
 					<StatusText variant="accent" pulse>
 						Touch your security key...
 					</StatusText>
@@ -78,24 +108,8 @@ export function IPCAuthDialog({ service, user, onDone }: IPCAuthDialogProps) {
 					<StatusText variant="success">Authorized</StatusText>
 				) : (
 					<>
-						<Input
-							type="password"
-							label="Security key PIN"
-							placeholder="Security key PIN"
-							value={pin}
-							onChange={(e) => setPin(e.target.value)}
-							onKeyDown={(e) => e.key === "Enter" && pin && handleSubmit()}
-							autoFocus
-						/>
-
-						<div className="flex gap-2">
-							<Button onClick={handleSubmit} disabled={!pin} className="flex-1">
-								Authenticate
-							</Button>
-							<Button variant="secondary" onClick={handleCancel} className="flex-1">
-								Cancel
-							</Button>
-						</div>
+						{state === "error" && <Alert>{error}</Alert>}
+						{pinForm}
 					</>
 				)}
 			</div>

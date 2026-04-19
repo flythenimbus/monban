@@ -1,9 +1,8 @@
-import { Clipboard, Dialogs } from "@wailsio/runtime";
+import { Dialogs } from "@wailsio/runtime";
 import { useState } from "react";
 import { api } from "../../../api";
-import { Button, Input, PinAuth, Select, Toggle } from "../../../components";
+import { Button, Input, PinAuth, Toggle } from "../../../components";
 import { Folder } from "../../../components/icons/Folder";
-import type { GateMode } from "../../../types";
 import { friendlyError } from "../../../util/errors";
 import { useAdmin } from "../AdminContext";
 import { VaultRow } from "./VaultRow";
@@ -12,7 +11,6 @@ export function GeneralTab() {
 	const {
 		settings,
 		handleToggle: onToggle,
-		handleSetting: onSetting,
 		pendingChange,
 		confirmPendingChange,
 		cancelPendingChange,
@@ -22,19 +20,6 @@ export function GeneralTab() {
 	} = useAdmin();
 	const [inputPath, setInputPath] = useState("");
 	const [addPending, setAddPending] = useState(false);
-	const [gateCmd, setGateCmd] = useState("");
-	const [copied, setCopied] = useState(false);
-	const isMac = navigator.platform.startsWith("Mac");
-
-	const handleAdminGate = async (value: GateMode) => {
-		onSetting("admin_gate", value);
-		try {
-			const cmd = await api.getAdminGateCommand(value);
-			setGateCmd(cmd || "");
-		} catch {
-			setGateCmd("");
-		}
-	};
 
 	const handleBrowse = async () => {
 		const selected = await Dialogs.OpenFile({
@@ -96,58 +81,11 @@ export function GeneralTab() {
 						label="Force authentication"
 					/>
 				</div>
-				<div className="flex items-center justify-between gap-4 px-4 py-3">
-					<div>
-						<div className="text-sm font-medium text-text">Admin gate</div>
-						<div className="text-xs text-text-secondary">
-							{isMac
-								? "Require security key for sudo and system admin actions"
-								: "Require security key for sudo"}
-						</div>
-					</div>
-					<Select
-						label="Admin gate"
-						value={settings.admin_gate || "off"}
-						onChange={(v) => handleAdminGate(v as GateMode)}
-						disabled={!!pendingChange}
-						options={[
-							{ value: "off", label: "Off" },
-							{ value: "default", label: "Default" },
-							{
-								value: "strict",
-								label: isMac ? "Strict" : "Strict (sudo + su)",
-							},
-						]}
-					/>
-				</div>
 				{pendingChange && (
 					<PinAuth
 						onSubmit={confirmPendingChange}
 						onCancel={cancelPendingChange}
 					/>
-				)}
-				{gateCmd && (
-					<div className="px-4 py-3">
-						<div className="text-xs text-text-secondary mb-2">
-							Run in Terminal to apply:
-						</div>
-						<div className="flex items-center gap-2 bg-black/30 rounded-lg px-3 py-2">
-							<code className="text-xs font-mono text-white/90 break-all flex-1">
-								{gateCmd}
-							</code>
-							<button
-								type="button"
-								onClick={() => {
-									Clipboard.SetText(gateCmd);
-									setCopied(true);
-									setTimeout(() => setCopied(false), 2000);
-								}}
-								className="shrink-0 text-xs text-accent hover:text-accent/80 transition-colors cursor-pointer font-medium"
-							>
-								{copied ? "Copied" : "Copy"}
-							</button>
-						</div>
-					</div>
 				)}
 			</div>
 

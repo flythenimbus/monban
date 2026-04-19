@@ -45,6 +45,7 @@ export function PinAuth({
 						onChange={(e) => setPin(e.target.value)}
 						onKeyDown={(e) => e.key === "Enter" && pin && handleSubmit()}
 						className="flex-1 !py-1.5 !px-2.5 !text-xs"
+						autoFocus
 					/>
 					<Button size="sm" onClick={handleSubmit} disabled={!pin}>
 						Authenticate

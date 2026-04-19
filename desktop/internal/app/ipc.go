@@ -27,13 +27,23 @@ type ipcState struct {
 	cancel   context.CancelFunc
 
 	// Coordination channels between the socket handler and the frontend.
-	pinCh    chan string // frontend sends PIN here
-	resultCh chan error  // backend sends assertion result here
-	active   bool       // true while an auth request is being processed
+	pinCh    chan string          // frontend sends PIN here
+	resultCh chan error           // backend sends assertion result here
+	active   bool                 // true while an auth request is being processed
+	pending  *monban.IPCRequest   // current in-flight request; polled by frontend on cold start
 }
 
 // StartIPCListener begins listening for IPC auth requests on a Unix socket.
 func (a *App) StartIPCListener() {
+	// Ensure the config directory exists — on a clean install or after
+	// config deletion the user won't have ~/.config/monban yet, and
+	// net.Listen would fail. We only create the dir; registration later
+	// populates credentials.json inside it.
+	if err := os.MkdirAll(monban.ConfigDir(), 0700); err != nil {
+		log.Printf("monban: IPC listener cannot create config dir: %v", err)
+		return
+	}
+
 	monban.CleanStaleSocket()
 
 	sockPath := monban.IPCSocketPath()
@@ -108,6 +118,7 @@ func (a *App) handleIPCConn(ctx context.Context, conn net.Conn) {
 	defer func() {
 		a.ipc.mu.Lock()
 		a.ipc.active = false
+		a.ipc.pending = nil
 		a.ipc.mu.Unlock()
 	}()
 
@@ -124,6 +135,14 @@ func (a *App) handleIPCConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 
+	log.Printf("monban: IPC auth request received: service=%q user=%q", req.Service, req.User)
+
+	// Expose the in-flight request so the frontend can pick it up on cold
+	// start (before Events.On has subscribed to ipc:auth-request).
+	a.ipc.mu.Lock()
+	a.ipc.pending = &req
+	a.ipc.mu.Unlock()
+
 	// Exit fullscreen/kiosk mode if active — IPC auth bypasses the app's
 	// own lock screen and doesn't require the app to be unlocked.
 	a.ExitFullscreen()
@@ -131,6 +150,7 @@ func (a *App) handleIPCConn(ctx context.Context, conn net.Conn) {
 	// Emit the event first so React can switch views while the window
 	// is still hidden, then show the window after a brief render delay.
 	if a.window != nil {
+		log.Printf("monban: IPC emitting ipc:auth-request event")
 		a.window.EmitEvent("ipc:auth-request", map[string]string{
 			"user":    req.User,
 			"service": req.Service,
@@ -141,6 +161,7 @@ func (a *App) handleIPCConn(ctx context.Context, conn net.Conn) {
 			a.window.Show()
 			a.window.Focus()
 		})
+		log.Printf("monban: IPC window shown, waiting for PIN")
 	}
 
 	// Wait for PIN from frontend or timeout/cancel
@@ -207,6 +228,23 @@ func (a *App) performIPCAuth(pin string) error {
 	}
 
 	return fmt.Errorf("no matching registered key")
+}
+
+// GetPendingIPCAuth returns a snapshot of the current in-flight IPC auth
+// request, or nil if none is active. Called by the frontend on mount to
+// handle the cold-start case where the plugin connected before Events.On
+// subscribed to ipc:auth-request.
+func (a *App) GetPendingIPCAuth() *monban.IPCRequest {
+	if a.ipc == nil {
+		return nil
+	}
+	a.ipc.mu.Lock()
+	defer a.ipc.mu.Unlock()
+	if a.ipc.pending == nil {
+		return nil
+	}
+	snapshot := *a.ipc.pending
+	return &snapshot
 }
 
 // HandleIPCAuth is called by the frontend after the user enters their PIN.

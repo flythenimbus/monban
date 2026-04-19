@@ -153,6 +153,87 @@ static BOOL performIPCAuth(const char *socketPath, const char *service) {
     return [resp[@"success"] boolValue];
 }
 
+#pragma mark - Auth cache
+/*
+ * Time-based auth cache. A single user-driven admin action (e.g. deleting a
+ * user) can fan out into many separate authorization transactions — Apple's
+ * writeconfig.xpc calls AuthorizationCopyRights repeatedly while performing
+ * the underlying directory/file operations, each with a fresh engine ref.
+ * Without caching the user would PIN+touch per transaction (we saw ~15 in
+ * one delete flow), which is intolerable.
+ *
+ * After a successful FIDO2 auth we remember the time, username, and uid.
+ * Subsequent mechanism invocations within AUTH_CACHE_TTL_SECONDS replay the
+ * cached result immediately. This mirrors Apple's built-in `shared: true`
+ * behavior for password rights.
+ *
+ * Security tradeoff: any admin auth request during the cache window proceeds
+ * without a fresh YubiKey tap. This is equivalent to how sudo caches the
+ * user's password for a few minutes after a successful entry.
+ */
+#define AUTH_CACHE_TTL_SECONDS 60.0
+// Denial cache is shorter — we want the user to be able to retry soon, but
+// not be prompted 15 more times in the same authd transaction after saying
+// "cancel" once.
+#define DENY_CACHE_TTL_SECONDS 10.0
+
+static dispatch_queue_t sCacheQueue;
+static NSDate *sCachedAt;
+static char sCachedUsername[256];
+static uid_t sCachedUID;
+static NSDate *sDeniedAt;
+
+static void cacheInit(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sCacheQueue = dispatch_queue_create("com.monban.authplugin.cache", DISPATCH_QUEUE_SERIAL);
+    });
+}
+
+static BOOL cacheLookup(char *usernameOut, size_t usernameCap, uid_t *uidOut) {
+    cacheInit();
+    __block BOOL hit = NO;
+    dispatch_sync(sCacheQueue, ^{
+        if (sCachedAt == nil) return;
+        if ([[NSDate date] timeIntervalSinceDate:sCachedAt] > AUTH_CACHE_TTL_SECONDS) return;
+        strlcpy(usernameOut, sCachedUsername, usernameCap);
+        *uidOut = sCachedUID;
+        hit = YES;
+    });
+    return hit;
+}
+
+static void cacheStore(const char *username, uid_t uid) {
+    cacheInit();
+    dispatch_sync(sCacheQueue, ^{
+        sCachedAt = [NSDate date];
+        strlcpy(sCachedUsername, username, sizeof(sCachedUsername));
+        sCachedUID = uid;
+    });
+    // A successful auth implicitly clears any pending denial.
+    dispatch_sync(sCacheQueue, ^{
+        sDeniedAt = nil;
+    });
+}
+
+static BOOL denyCacheHit(void) {
+    cacheInit();
+    __block BOOL hit = NO;
+    dispatch_sync(sCacheQueue, ^{
+        if (sDeniedAt == nil) return;
+        if ([[NSDate date] timeIntervalSinceDate:sDeniedAt] > DENY_CACHE_TTL_SECONDS) return;
+        hit = YES;
+    });
+    return hit;
+}
+
+static void denyCacheStore(void) {
+    cacheInit();
+    dispatch_sync(sCacheQueue, ^{
+        sDeniedAt = [NSDate date];
+    });
+}
+
 #pragma mark - Plugin Interface
 
 static OSStatus MonbanPluginDestroy(AuthorizationPluginRef inPlugin) {
@@ -173,9 +254,77 @@ static OSStatus MonbanMechanismCreate(AuthorizationPluginRef inPlugin,
     return errAuthorizationSuccess;
 }
 
+/*
+ * Resolve the console-owning username + uid. When SecurityAgent runs our
+ * mechanism, the plugin host is typically uid 92 (securityagent) or 0
+ * (root), NOT the user being authorized — so we can't just use getuid().
+ * We ask SystemConfiguration for the current console user, matching what
+ * builtin mechanisms do.
+ */
+static BOOL resolveConsoleUser(char *usernameOut, size_t usernameCap, uid_t *uidOut) {
+    SCDynamicStoreRef store = SCDynamicStoreCreate(NULL, CFSTR("monban"), NULL, NULL);
+    if (!store) return NO;
+    uid_t consoleUID = 0;
+    CFStringRef user = SCDynamicStoreCopyConsoleUser(store, &consoleUID, NULL);
+    CFRelease(store);
+    if (!user) return NO;
+    BOOL ok = NO;
+    if (CFStringGetCString(user, usernameOut, (CFIndex)usernameCap, kCFStringEncodingUTF8)) {
+        *uidOut = consoleUID;
+        ok = YES;
+    }
+    CFRelease(user);
+    return ok;
+}
+
+static void setAuthContext(const AuthorizationCallbacks *cb,
+                           AuthorizationEngineRef engine,
+                           const char *username, uid_t uid) {
+    AuthorizationValue userVal = {
+        .length = strlen(username),
+        .data = (void *)username,
+    };
+    cb->SetContextValue(engine, "username",
+                        kAuthorizationContextFlagExtractable, &userVal);
+
+    AuthorizationValue uidVal = {
+        .length = sizeof(uid),
+        .data = &uid,
+    };
+    cb->SetContextValue(engine, "uid",
+                        kAuthorizationContextFlagExtractable, &uidVal);
+}
+
 static OSStatus MonbanMechanismInvoke(AuthorizationMechanismRef inMechanism) {
     MonbanMechanism *mech = (MonbanMechanism *)inMechanism;
     const AuthorizationCallbacks *cb = mech->plugin->callbacks;
+
+    /*
+     * Denial cache hit: the user recently cancelled an auth (or it failed
+     * out). authd may still fan the same transaction into multiple rights
+     * or subsequent admin operations; suppressing them keeps us from
+     * re-prompting. Checked BEFORE the success cache so a fresh denial
+     * always takes priority.
+     */
+    if (denyCacheHit()) {
+        cb->SetResult(mech->engine, kAuthorizationResultDeny);
+        return errAuthorizationSuccess;
+    }
+
+    /*
+     * Time-based cache hit: within AUTH_CACHE_TTL_SECONDS of the last
+     * successful FIDO2 auth, skip re-prompting. Matches sudo's password
+     * caching behavior and handles the case where one user-facing action
+     * (e.g. delete user) fans out into many separate authorization
+     * transactions under the hood.
+     */
+    char cachedUsername[256] = {0};
+    uid_t cachedUID = 0;
+    if (cacheLookup(cachedUsername, sizeof(cachedUsername), &cachedUID)) {
+        setAuthContext(cb, mech->engine, cachedUsername, cachedUID);
+        cb->SetResult(mech->engine, kAuthorizationResultAllow);
+        return errAuthorizationSuccess;
+    }
 
     NSString *sockPath = monbanSocketPath();
     if (!sockPath) {
@@ -186,8 +335,25 @@ static OSStatus MonbanMechanismInvoke(AuthorizationMechanismRef inMechanism) {
     BOOL ok = performIPCAuth(sockPath.fileSystemRepresentation, "authorization");
 
     if (ok) {
+        /*
+         * SecurityAgent won't accept a bare "Allow" — it needs the
+         * authenticating user's uid + username in the authorization
+         * context, otherwise downstream callers (Users & Groups, etc.)
+         * get "Mechanism did not return a uid" and fall back to the
+         * password prompt. Must be set BEFORE SetResult.
+         */
+        char username[256] = {0};
+        uid_t uid = 0;
+        if (resolveConsoleUser(username, sizeof(username), &uid)) {
+            setAuthContext(cb, mech->engine, username, uid);
+            cacheStore(username, uid);
+        }
         cb->SetResult(mech->engine, kAuthorizationResultAllow);
     } else {
+        // Remember the denial briefly so authd doesn't re-invoke us for
+        // every subsequent right in the same multi-right transaction (or
+        // related admin op). Short TTL lets the user retry fresh shortly.
+        denyCacheStore();
         cb->SetResult(mech->engine, kAuthorizationResultDeny);
     }
 

@@ -164,7 +164,6 @@ vaults, credentials) requires a fresh FIDO2 assertion (PIN + touch).
     }
   ],
   "force_authentication": true,
-  "admin_gate": "off",
   "vaults": [
     { "label": "Documents", "path": "/home/alice/Documents" },
     { "label": "secret.txt", "path": "/home/alice/secret.txt", "type": "file" }
@@ -206,39 +205,61 @@ Every config write requires a fresh FIDO2 assertion (PIN + physical touch):
 settings changes, vault add/remove, key add/remove, decrypt mode changes.
 No mutation uses the in-memory master secret alone.
 
-## 9a. Admin Gate (PAM Integration)
+## 9a. Admin Gate (PAM + authorizationdb integration)
 
-Monban can gate admin actions behind YubiKey FIDO2 authentication via
-`pam_exec.so`. A single `admin_gate` setting controls all gated services.
+Installing Monban's `.pkg` on macOS gates both `sudo` and native admin
+authorization dialogs (System Settings, Installer, etc.) behind a YubiKey
+FIDO2 assertion. There is no runtime on/off/default/strict toggle — the gate
+is configured once at pkg install time and removed by uninstalling. See
+`plans/macos_install.md` Phase 2.5 for why (macOS Tahoe blocks unsigned root
+daemons from writing `/etc/pam.d/`, so config is placed via Installer.app's
+postinstall context once at install).
 
-Services gated:
-- **sudo** (`/etc/pam.d/sudo_local` on macOS, `/etc/pam.d/sudo` on Linux)
-- **authorization** (`/etc/pam.d/authorization` on macOS only) — gates the
-  native "enter your password" dialog used by System Settings, installer, etc.
-- **su** (`/etc/pam.d/su` on Linux, strict mode only)
+### What gets configured at pkg install time
 
-Modes:
-- **off** — no PAM integration
-- **default** — `auth sufficient` — YubiKey success skips password, failure falls through
-- **strict** — `auth required` — YubiKey must succeed, no password fallback. Also gates su on Linux.
+Two independent subsystems, both placed by `build/darwin/pkg/scripts/postinstall`:
 
-IPC for GUI contexts:
+- **sudo:** `/etc/pam.d/sudo_local` is written with
+  `auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate`.
+  Monban's PAM module forks `monban-pam-helper` which authenticates via FIDO2;
+  success grants sudo, failure falls through to the normal password prompt.
+- **admin authorization dialogs:** the `system.preferences` and
+  `system.preferences.security` rights in `authorizationdb` are rebound to
+  `class: evaluate-mechanisms` pointing at `monban-auth:auth` (the bundled
+  SecurityAgent plugin). Original rights are backed up to
+  `/Library/Security/SecurityAgentPlugins/<right>.monban-backup`.
+
+### IPC for GUI contexts
+
 - The PAM helper tries `/dev/tty` first (terminal sudo). If no TTY is
-  available (e.g. macOS authorization dialog), it connects to the running
-  Monban app via a Unix socket IPC (`~/.config/monban/monban.sock`).
+  available (e.g. a GUI authorization dialog), it connects to the running
+  Monban app via a Unix socket at `~/.config/monban/monban.sock`.
 - The app shows a PIN dialog overlay, performs the FIDO2 assertion, and
   returns success/failure to the helper over the socket.
 - If the app is not running, the helper launches it via `open -a Monban`
   and retries the connection.
 
-Components:
-- `cmd/pam-helper/` — standalone binary invoked by PAM, resolves invoking
-  user's home via `PAM_USER`/`SUDO_USER` + `user.Lookup()`, reads secure config,
-  prompts for PIN via `/dev/tty` or IPC, performs FIDO2 assertion + signature verification
-- `internal/monban/pam.go` — PAM line install/removal with root escalation
-- `internal/monban/ipc.go` — IPC protocol types and socket path helpers
-- `ipc.go` — Unix socket IPC listener (app side)
-- `pam_darwin.go` / `pam_linux.go` — OS-specific privilege escalation and PAM paths
+### Components
+
+- `cmd/pam-helper/` — standalone binary invoked by PAM. Reads secure config,
+  prompts for PIN via `/dev/tty` or IPC, performs FIDO2 assertion + signature
+  verification. Its `--install` / `--uninstall` subcommands still exist for
+  Linux; macOS uses the pkg postinstall path instead.
+- `cmd/pam-module/pam_monban.c` — thin PAM module (`pam_monban.so`) that
+  execs `/usr/local/bin/monban-pam-helper` and maps its exit status to
+  `PAM_SUCCESS` / `PAM_AUTH_ERR`.
+- `cmd/auth-plugin/` — SecurityAgent plugin bundle invoked by the
+  authorizationdb rebind.
+- `internal/monban/ipc.go` / `ipc.go` — IPC protocol and user-side listener.
+- `internal/monban/pam.go` / `pam_darwin.go` / `pam_linux.go` — shared PAM
+  path helpers (`PamSudoPath`, `PamSuPath`, `PamLine`, `PamHelperPath`).
+
+### Disabling
+
+Uninstall the pkg. `pkgutil --forget com.monban.pkg` + manual removal of
+`/etc/pam.d/sudo_local`, restore of authorizationdb rights from the
+`.monban-backup` files, and deletion of the installed binaries + bundle.
+A future release will ship a proper uninstaller script.
 
 ## 10. Vault Types
 

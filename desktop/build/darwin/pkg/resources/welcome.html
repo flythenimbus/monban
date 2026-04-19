@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <style>
+        :root { color-scheme: light dark; }
+        body {
+            font-family: -apple-system, sans-serif;
+            padding: 1em;
+            line-height: 1.5;
+            color: #222;
+            background: #fff;
+        }
+        h2 { margin-top: 0; }
+        code {
+            background: rgba(128, 128, 128, 0.2);
+            color: inherit;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.95em;
+        }
+        p.note {
+            font-size: 0.9em;
+            opacity: 0.7;
+            border-top: 1px solid rgba(128, 128, 128, 0.3);
+            padding-top: 0.8em;
+            margin-top: 1.2em;
+        }
+        @media (prefers-color-scheme: dark) {
+            body { color: #eee; background: #1e1e1e; }
+        }
+    </style>
+</head>
+<body>
+    <h2>Welcome to Monban</h2>
+    <p>
+        Monban is a post-login security layer that encrypts your files using a
+        YubiKey FIDO2 assertion (PIN + physical touch) as the sole unlock mechanism.
+    </p>
+    <p>This installer will place:</p>
+    <ul>
+        <li><code>Monban.app</code> in <code>/Applications</code></li>
+        <li>The PAM helper in <code>/usr/local/bin</code></li>
+        <li>The PAM module in <code>/usr/local/lib/pam</code></li>
+        <li>The macOS authorization plugin in <code>/Library/Security/SecurityAgentPlugins</code></li>
+    </ul>
+    <p>
+        It will also configure your system so <b>sudo</b> and native admin
+        authorization dialogs (System Settings, Installer, etc.) require your
+        registered YubiKey. Existing <code>authorizationdb</code> rights are
+        backed up and can be restored by uninstalling.
+    </p>
+    <p>
+        To disable Monban, uninstall the package. There is no runtime on/off
+        switch — installing is opting in to YubiKey-gated privileged actions.
+    </p>
+    <p class="note">
+        This package is not signed or notarized by Apple. It is open source software;
+        verify the release checksum against the project's release page if you downloaded
+        the package directly.
+    </p>
+</body>
+</html>

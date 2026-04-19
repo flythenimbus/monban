@@ -16,12 +16,15 @@ func (a *App) GetSettings() CombinedSettings {
 	return CombinedSettings{
 		OpenOnStartup:       sc.OpenOnStartup,
 		ForceAuthentication: sc.ForceAuthentication,
-		AdminGate:           sc.AdminGate,
 	}
 }
 
 // UpdateSettings saves all settings to the HMAC-signed secure config.
 // All changes require a fresh FIDO2 assertion (PIN + touch).
+//
+// Note: admin_gate (sudo / admin-dialog gating) is no longer a runtime setting
+// on macOS — it is configured once at pkg install time. See plans/macos_install.md
+// Phase 2.5 for the rationale.
 func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -33,7 +36,7 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 
 	prevForceAuth := sc.ForceAuthentication
 
-	// Fresh FIDO2 assertion — all settings are security-relevant
+	// Fresh FIDO2 assertion — all settings are security-relevant.
 	masterSecret, err := a.fidoReauth(pin)
 	if err != nil {
 		return fmt.Errorf("FIDO2 authorization required: %w", err)
@@ -42,7 +45,6 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 
 	sc.OpenOnStartup = settings.OpenOnStartup
 	sc.ForceAuthentication = settings.ForceAuthentication
-	sc.AdminGate = settings.AdminGate
 
 	if settings.OpenOnStartup {
 		InstallLaunchAgent()
@@ -64,22 +66,6 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 	}
 
 	return nil
-}
-
-// GetAdminGateCommand returns the terminal command the user should run to
-// install or remove the admin gate. Installs sudo PAM gate on all platforms
-// and the authorization plugin on macOS.
-func (a *App) GetAdminGateCommand(mode string) (string, error) {
-	helperSrc, err := monban.PamHelperPath()
-	if err != nil {
-		return "", err
-	}
-
-	if mode == "" || mode == "off" {
-		return fmt.Sprintf("sudo '%s' --uninstall", helperSrc), nil
-	}
-
-	return fmt.Sprintf("sudo '%s' --install %s", helperSrc, mode), nil
 }
 
 // ListKeys returns information about registered security keys.

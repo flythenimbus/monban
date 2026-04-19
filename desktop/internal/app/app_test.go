@@ -200,7 +200,4 @@ func TestCombinedSettings_Defaults(t *testing.T) {
 	if cs.ForceAuthentication {
 		t.Error("default ForceAuthentication should be false")
 	}
-	if cs.AdminGate != "" {
-		t.Errorf("default AdminGate should be empty, got %q", cs.AdminGate)
-	}
 }
