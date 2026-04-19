@@ -17,7 +17,7 @@ func shortSocketDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
 
@@ -169,7 +169,7 @@ func TestIPCProtocolOverSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	// Server goroutine: read request, write response.
 	done := make(chan struct{})
@@ -179,7 +179,7 @@ func TestIPCProtocolOverSocket(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		var req IPCRequest
 		if err := json.NewDecoder(conn).Decode(&req); err != nil {
@@ -192,7 +192,7 @@ func TestIPCProtocolOverSocket(t *testing.T) {
 
 		resp := IPCResponse{Success: true}
 		data, _ := json.Marshal(resp)
-		conn.Write(data)
+		_, _ = conn.Write(data)
 	}()
 
 	// Client: connect, send request, read response.
@@ -200,7 +200,7 @@ func TestIPCProtocolOverSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	req := IPCRequest{Type: "auth", User: "alice", Service: "sudo"}
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
@@ -228,34 +228,34 @@ func TestIPCProtocolOverSocketDenied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	go func() {
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		var req IPCRequest
-		json.NewDecoder(conn).Decode(&req)
+		_ = json.NewDecoder(conn).Decode(&req)
 
 		resp := IPCResponse{Error: "cancelled by user"}
 		data, _ := json.Marshal(resp)
-		conn.Write(data)
+		_, _ = conn.Write(data)
 	}()
 
 	conn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	req := IPCRequest{Type: "auth", User: "bob", Service: "authorization"}
-	json.NewEncoder(conn).Encode(req)
+	_ = json.NewEncoder(conn).Encode(req)
 
 	var resp IPCResponse
-	json.NewDecoder(conn).Decode(&resp)
+	_ = json.NewDecoder(conn).Decode(&resp)
 
 	if resp.Success {
 		t.Error("expected denied response")
@@ -274,7 +274,7 @@ func TestIPCConcurrentConnectionsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	// Simulate a server that holds the first connection busy.
 	var activeConn net.Conn
@@ -290,24 +290,24 @@ func TestIPCConcurrentConnectionsRejected(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn2.Close()
+		defer func() { _ = conn2.Close() }()
 
 		var req IPCRequest
-		json.NewDecoder(conn2).Decode(&req)
+		_ = json.NewDecoder(conn2).Decode(&req)
 
 		resp := IPCResponse{Error: "another auth request is in progress"}
 		data, _ := json.Marshal(resp)
-		conn2.Write(data)
+		_, _ = conn2.Write(data)
 	}()
 
 	// First client connects (held busy).
 	conn1, _ := net.DialTimeout("unix", sockPath, 2*time.Second)
 	defer func() {
 		if conn1 != nil {
-			conn1.Close()
+			_ = conn1.Close()
 		}
 		if activeConn != nil {
-			activeConn.Close()
+			_ = activeConn.Close()
 		}
 	}()
 	<-ready
@@ -317,13 +317,13 @@ func TestIPCConcurrentConnectionsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn2.Close()
+	defer func() { _ = conn2.Close() }()
 
 	req := IPCRequest{Type: "auth", User: "eve", Service: "sudo"}
-	json.NewEncoder(conn2).Encode(req)
+	_ = json.NewEncoder(conn2).Encode(req)
 
 	var resp IPCResponse
-	json.NewDecoder(conn2).Decode(&resp)
+	_ = json.NewDecoder(conn2).Decode(&resp)
 
 	if resp.Success {
 		t.Error("second connection should be rejected")

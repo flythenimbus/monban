@@ -62,9 +62,10 @@ export const api = {
 	cancelIPCAuth: (): Promise<void> => App.CancelIPCAuth(),
 
 	getPendingIPCAuth: (): Promise<{ user: string; service: string } | null> =>
-		App.GetPendingIPCAuth() as unknown as Promise<
-			{ user: string; service: string } | null
-		>,
+		App.GetPendingIPCAuth() as unknown as Promise<{
+			user: string;
+			service: string;
+		} | null>,
 
 	hideToTray: (): Promise<void> => App.HideToTray(),
 
