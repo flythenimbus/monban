@@ -83,9 +83,7 @@ export function IPCAuthDialog({ service, user, onDone }: IPCAuthDialogProps) {
 				style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
 			>
 				<div className="text-center">
-					<h1 className="text-lg font-semibold text-text">
-						{label} requested
-					</h1>
+					<h1 className="text-lg font-semibold text-text">{label} requested</h1>
 					<p aria-live="polite" className="text-text-secondary text-sm mt-1">
 						{!deviceConnected
 							? "Insert your security key to continue"

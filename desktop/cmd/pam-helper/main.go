@@ -507,7 +507,7 @@ func authenticateViaIPC() error {
 			return fmt.Errorf("FIDO2 auth failed: could not connect to Monban after launch: %w", err)
 		}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
 

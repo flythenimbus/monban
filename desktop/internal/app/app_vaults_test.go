@@ -209,7 +209,7 @@ func TestAddPath_DispatchesFile(t *testing.T) {
 
 	dir := t.TempDir()
 	f := filepath.Join(dir, "test.txt")
-	os.WriteFile(f, []byte("hello"), 0644)
+	_ = os.WriteFile(f, []byte("hello"), 0644)
 
 	// AddPath on a file will call addFile, which requires loading
 	// secure config from disk.
@@ -222,7 +222,7 @@ func TestAddPath_DispatchesFile(t *testing.T) {
 func TestCheckDiskSpace_ValidDir(t *testing.T) {
 	dir := t.TempDir()
 	// Write a small file so the folder isn't empty
-	os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
+	_ = os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello world"), 0644)
 
 	a := NewApp()
 	info := a.CheckDiskSpace(dir)

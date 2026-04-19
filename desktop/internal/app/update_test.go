@@ -54,7 +54,7 @@ func TestCheckForUpdate_NewVersionAvailable(t *testing.T) {
 			HTMLURL: "https://github.com/flythenimbus/monban/releases/tag/v99.0.0",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 

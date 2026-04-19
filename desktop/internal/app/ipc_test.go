@@ -91,8 +91,8 @@ func TestStopIPCListener_NilIPC(t *testing.T) {
 
 func TestWriteIPCResponse_Success(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
 
 	go writeIPCResponse(server, monban.IPCResponse{Success: true})
 
@@ -112,8 +112,8 @@ func TestWriteIPCResponse_Success(t *testing.T) {
 
 func TestWriteIPCResponse_Error(t *testing.T) {
 	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
 
 	go writeIPCResponse(server, monban.IPCResponse{Error: "test error"})
 
@@ -133,11 +133,11 @@ func TestWriteIPCResponse_Error(t *testing.T) {
 
 func TestWriteIPCResponse_ClosedConn(t *testing.T) {
 	server, client := net.Pipe()
-	client.Close() // close the read end
+	_ = client.Close() // close the read end
 
 	// Should not panic on write error
 	writeIPCResponse(server, monban.IPCResponse{Success: true})
-	server.Close()
+	_ = server.Close()
 }
 
 func TestHideToTray_NilWindow(t *testing.T) {

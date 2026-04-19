@@ -102,7 +102,7 @@ func (a *App) ipcAcceptLoop(ctx context.Context) {
 }
 
 func (a *App) handleIPCConn(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(ipcAuthTimeout))
 
 	// Serialize: only one IPC auth at a time.

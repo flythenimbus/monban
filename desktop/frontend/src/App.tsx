@@ -52,15 +52,18 @@ function App() {
 		const offRollback = Events.On("app:config-rollback-detected", () =>
 			setRollbackWarning(true),
 		);
-		const offIpcAuth = Events.On("ipc:auth-request", (event: { data: IPCAuthRequest }) => {
-			console.log("[ipc] received ipc:auth-request", event.data);
-			setIpcAuth(event.data);
-			setView((prev) => {
-				console.log("[ipc] switching view from", prev, "to ipc-auth");
-				setPreviousView(prev);
-				return "ipc-auth";
-			});
-		});
+		const offIpcAuth = Events.On(
+			"ipc:auth-request",
+			(event: { data: IPCAuthRequest }) => {
+				console.log("[ipc] received ipc:auth-request", event.data);
+				setIpcAuth(event.data);
+				setView((prev) => {
+					console.log("[ipc] switching view from", prev, "to ipc-auth");
+					setPreviousView(prev);
+					return "ipc-auth";
+				});
+			},
+		);
 		return () => {
 			offLocked();
 			offRollback();
