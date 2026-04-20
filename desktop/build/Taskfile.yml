@@ -7,6 +7,21 @@ tasks:
     cmds:
       - go mod tidy
 
+  build:monban-sign:
+    summary: Builds the monban-sign CLI (ed25519 plugin artefact signer)
+    desc: |
+      Produces {{.BIN_DIR}}/monban-sign — the standalone tool used by
+      plugins/<name>/build.sh to sign manifests and tarballs against
+      Monban's trusted release key. Built for the host arch
+      (no CGo, no cross-compile) so it Just Works on any dev machine
+      or CI runner.
+    sources:
+      - cmd/monban-sign/*.go
+    generates:
+      - "{{.BIN_DIR}}/monban-sign"
+    cmds:
+      - go build -trimpath -ldflags="-w -s" -o {{.BIN_DIR}}/monban-sign ./cmd/monban-sign/
+
   install:frontend:deps:
     summary: Install frontend dependencies
     dir: frontend

@@ -38,6 +38,7 @@ tasks:
           DEV:
             ref: .DEV
       - task: common:generate:icons
+      - task: common:build:monban-sign
     cmds:
       - go build {{.BUILD_FLAGS}} -o {{.OUTPUT}}
     vars:

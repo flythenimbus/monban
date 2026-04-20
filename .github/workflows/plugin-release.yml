@@ -1,0 +1,125 @@
+name: Plugin Release
+
+# Builds and signs plugin artefacts for the monban plugin store.
+# Each plugin under plugins/<name>/ declares its runner + any setup
+# in a ci.yaml, and ships a build.sh that produces signed artefacts
+# in dist/. The discover job scans plugins/*/ci.yaml into a matrix;
+# the build job runs one cell per plugin on its declared runner.
+#
+# Contract for plugins/<name>/:
+#   ci.yaml         — {runs_on: <runner>, setup: <optional shell>}
+#   build.sh        — reads $SIGN_KEY (path) + $MONBAN_SIGN (path to signer),
+#                     emits tarballs/manifests + .sig files in dist/
+#
+# Trigger: push a tag like `plugins-v0.1.0`.
+on:
+  push:
+    tags: ["plugins-v*"]
+
+permissions:
+  contents: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          cells=()
+          for ci in plugins/*/ci.yaml; do
+            dir=$(dirname "$ci")
+            name=$(basename "$dir")
+            runs_on=$(yq -r '.runs_on' "$ci")
+            setup=$(yq -r '.setup // ""' "$ci")
+            cell=$(jq -n \
+              --arg name "$name" \
+              --arg dir "$dir" \
+              --arg runs_on "$runs_on" \
+              --arg setup "$setup" \
+              '{name: $name, dir: $dir, runs_on: $runs_on, setup: $setup}')
+            cells+=("$cell")
+          done
+          matrix=$(printf '%s\n' "${cells[@]}" | jq -s -c '{include: .}')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Discovered plugins:"
+          echo "$matrix" | jq .
+
+  build:
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ${{ matrix.runs_on }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+
+      - name: Plugin-specific setup
+        if: matrix.setup != ''
+        shell: bash
+        run: ${{ matrix.setup }}
+
+      - name: Write signing key to temp file
+        shell: bash
+        run: |
+          umask 077
+          echo "${{ secrets.MONBAN_PLUGIN_SIGNING_KEY }}" > "$RUNNER_TEMP/plugin-sign.key"
+          echo "SIGN_KEY=$RUNNER_TEMP/plugin-sign.key" >> "$GITHUB_ENV"
+
+      - name: Build monban-sign
+        working-directory: desktop
+        run: go build -trimpath -ldflags="-w -s" -o "$RUNNER_TEMP/monban-sign" ./cmd/monban-sign/
+
+      - name: Build & sign ${{ matrix.name }}
+        working-directory: ${{ matrix.dir }}
+        env:
+          MONBAN_SIGN: ${{ runner.temp }}/monban-sign
+        run: ./build.sh
+
+      - name: Wipe signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/plugin-sign.key"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-artifacts
+          path: |
+            ${{ matrix.dir }}/dist/*.tar.gz
+            ${{ matrix.dir }}/dist/*.tar.gz.sig
+            ${{ matrix.dir }}/dist/*manifest.json
+            ${{ matrix.dir }}/dist/*manifest.json.sig
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "Monban Plugins ${{ github.ref_name }}" \
+            --notes "Plugin artefacts signed with the Monban release key." \
+            artifacts/*

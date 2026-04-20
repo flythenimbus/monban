@@ -56,6 +56,8 @@ jobs:
           version: "~> v2"
           args: build --clean -f .goreleaser-darwin.yml
           workdir: desktop
+        env:
+          MONBAN_RELEASE_PUBKEY: ${{ secrets.MONBAN_PLUGIN_SIGNING_PUBKEY }}
 
       - name: Package .app bundle
         working-directory: desktop
@@ -120,6 +122,8 @@ jobs:
           version: "~> v2"
           args: release --skip=publish --clean -f .goreleaser-linux-amd64.yml
           workdir: desktop
+        env:
+          MONBAN_RELEASE_PUBKEY: ${{ secrets.MONBAN_PLUGIN_SIGNING_PUBKEY }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -166,6 +170,8 @@ jobs:
           version: "~> v2"
           args: release --skip=publish --clean -f .goreleaser-linux-arm64.yml
           workdir: desktop
+        env:
+          MONBAN_RELEASE_PUBKEY: ${{ secrets.MONBAN_PLUGIN_SIGNING_PUBKEY }}
 
       - uses: actions/upload-artifact@v4
         with:

@@ -106,6 +106,32 @@ tasks:
       - git tag v{{.VERSION}}
       - git push origin v{{.VERSION}}
 
+  plugin:release:
+    summary: Cuts a plugin-store release by pushing a plugins-v<version> tag
+    preconditions:
+      - sh: '[ -n "{{.VERSION}}" ]'
+        msg: "VERSION is required. Usage: task plugin:release VERSION=0.1.0"
+    cmds:
+      - git tag plugins-v{{.VERSION}}
+      - git push origin plugins-v{{.VERSION}}
+
+  plugin:release:test:
+    summary: Pushes a plugins-v<version> release candidate tag to test the plugin workflow
+    vars:
+      VERSION: '{{.VERSION | default "0.0.1-rc1"}}'
+    cmds:
+      - git tag plugins-v{{.VERSION}}
+      - git push origin plugins-v{{.VERSION}}
+
+  plugin:release:test:cleanup:
+    summary: Deletes a plugins-v<version> candidate tag and its GitHub release
+    vars:
+      VERSION: '{{.VERSION | default "0.0.1-rc1"}}'
+    cmds:
+      - gh release delete plugins-v{{.VERSION}} --yes 2>/dev/null || true
+      - git push origin --delete plugins-v{{.VERSION}} 2>/dev/null || true
+      - git tag -d plugins-v{{.VERSION}} 2>/dev/null || true
+
   build:docker:
     summary: Builds a Docker image for server mode deployment
     cmds:
