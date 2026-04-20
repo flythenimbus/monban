@@ -12,6 +12,7 @@ export {
     CombinedSettings,
     DiskSpaceInfo,
     KeyInfo,
+    PluginPinTouchRequest,
     UpdateInfo,
     VaultStatus
 } from "./models.js";

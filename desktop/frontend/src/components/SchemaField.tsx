@@ -24,8 +24,8 @@ export function SchemaField({
 
 	if (spec.type === "bool") {
 		return (
-			<div className="flex items-center justify-between">
-				<div className="pr-4">
+			<div className="flex items-center justify-between gap-4">
+				<div className="min-w-0 flex-1">
 					<div className="text-sm text-text">{label}</div>
 					{spec.description && (
 						<div className="text-xs text-text-secondary">
@@ -33,11 +33,13 @@ export function SchemaField({
 						</div>
 					)}
 				</div>
-				<Toggle
-					checked={Boolean(value)}
-					onChange={() => onChange(!value)}
-					label={label}
-				/>
+				<div className="shrink-0">
+					<Toggle
+						checked={Boolean(value)}
+						onChange={() => onChange(!value)}
+						label={label}
+					/>
+				</div>
 			</div>
 		);
 	}

@@ -1,57 +1,50 @@
 #!/bin/sh
 # admin-gate installer postinstall.
 #
-# Runs as root via /usr/sbin/installer (itself wrapped by osascript's
-# "with administrator privileges" from the Monban app).
+# Runs as root under macOS Installer.app (the only process context on
+# macOS Tahoe that can modify /etc/pam.d/ and authorizationdb for
+# non-Apple code). This script:
 #
-# SIP on macOS Tahoe+ refuses to let any shell script CREATE files in
-# /etc/pam.d/, even from a pkg postinstall. The only blessed way to
-# bring sudo_local into existence is:
-#
-#     cp /etc/pam.d/sudo_local.template /etc/pam.d/sudo_local
-#
-# Once the file exists, in-place edits (truncate + rewrite on the same
-# inode via `>`) are permitted. So:
-#
-#   1. Drop helper + PAM module into /usr/local/ (payload — works).
-#   2. `cp` the template to materialise sudo_local if missing.
-#   3. Rewrite sudo_local in-place, stripping any stale monban line
-#      and appending the current one.
+#   1. Tightens perms on payload files: PAM helper, PAM module, and
+#      the SecurityAgent authorization plugin bundle.
+#   2. Ensures /etc/pam.d/sudo_local exists (cp from Apple's template)
+#      and contains the monban PAM gate line. Idempotent.
+#   3. Backs up and rebinds each GATED_RIGHTS authorizationdb right to
+#      the monban-auth:auth mechanism so GUI admin dialogs route to us.
 
 LOG=/tmp/monban-admin-gate-postinstall.log
 exec > "$LOG" 2>&1
 set -eux
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/gated-rights.sh"
+
+# ---------- 1. tighten payload perms ----------
+
+chown root:wheel /usr/local/bin/monban-pam-helper
+chmod 0755 /usr/local/bin/monban-pam-helper
+
+chown root:wheel /usr/local/lib/pam/pam_monban.so
+chmod 0644 /usr/local/lib/pam/pam_monban.so
+
+chown -R root:wheel /Library/Security/SecurityAgentPlugins/monban-auth.bundle
+chmod -R a+rX      /Library/Security/SecurityAgentPlugins/monban-auth.bundle
+
+# ---------- 2. /etc/pam.d/sudo_local ----------
 
 SUDO_LOCAL=/etc/pam.d/sudo_local
 TEMPLATE=${SUDO_LOCAL}.template
 PAM_LINE='auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate'
 TAG='# monban sudo gate'
 
-# Payload placed /usr/local/bin/monban-pam-helper + /usr/local/lib/pam/pam_monban.so.
-# Tighten perms.
-chown root:wheel /usr/local/bin/monban-pam-helper
-chmod 0755 /usr/local/bin/monban-pam-helper
-chown root:wheel /usr/local/lib/pam/pam_monban.so
-chmod 0644 /usr/local/lib/pam/pam_monban.so
-
-# Materialise sudo_local if it doesn't exist. Prefer the template so
-# macOS Tahoe's SIP special-case accepts the creation; fall back to a
-# direct touch on older macOS where SIP doesn't enforce this.
 if [ ! -f "$SUDO_LOCAL" ]; then
     if [ -f "$TEMPLATE" ]; then
         cp "$TEMPLATE" "$SUDO_LOCAL"
     else
-        : > "$SUDO_LOCAL" || {
-            echo "ERROR: cannot create $SUDO_LOCAL (no template, SIP blocks direct create)" >&2
-            exit 1
-        }
+        : > "$SUDO_LOCAL"
     fi
 fi
 
-# In-place edit: filter out any stale monban line, then append the
-# current one. Using `cat | grep | tee` keeps the rewrite on the
-# existing inode (no tmp file in /etc/pam.d/) so SIP's "no new files"
-# rule doesn't trigger.
 filtered=$(grep -v -F -- "$TAG" "$SUDO_LOCAL" || true)
 {
     if [ -n "$filtered" ]; then
@@ -62,6 +55,57 @@ filtered=$(grep -v -F -- "$TAG" "$SUDO_LOCAL" || true)
 
 chown root:wheel "$SUDO_LOCAL"
 chmod 0444 "$SUDO_LOCAL"
+
+# ---------- 3. authorizationdb rebinds ----------
+
+AUTH_BACKUP_DIR=/Library/Security/SecurityAgentPlugins
+AUTH_MECH_PLIST='<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>class</key>
+    <string>evaluate-mechanisms</string>
+    <key>comment</key>
+    <string>Monban: security-key authentication for admin actions</string>
+    <key>mechanisms</key>
+    <array>
+        <string>monban-auth:auth</string>
+    </array>
+    <key>shared</key>
+    <true/>
+    <key>timeout</key>
+    <integer>300</integer>
+    <key>tries</key>
+    <integer>1</integer>
+</dict>
+</plist>'
+
+# Reclaim rights that a previous install gated but this install no
+# longer does — restore them to Apple defaults from their backup.
+for backup in "$AUTH_BACKUP_DIR"/*.monban-backup; do
+    [ -f "$backup" ] || continue
+    right=$(basename "$backup" .monban-backup)
+    still_gated=0
+    for g in "${GATED_RIGHTS[@]}"; do
+        [ "$g" = "$right" ] && { still_gated=1; break; }
+    done
+    if [ "$still_gated" -eq 0 ]; then
+        security authorizationdb write "$right" < "$backup" 2>/dev/null || true
+        rm -f "$backup"
+    fi
+done
+
+# Back up + rebind each currently-gated right.
+for right in "${GATED_RIGHTS[@]}"; do
+    backup="$AUTH_BACKUP_DIR/$right.monban-backup"
+    if [ ! -f "$backup" ]; then
+        security authorizationdb read "$right" > "$backup" 2>/dev/null \
+            && chmod 0600 "$backup"
+    fi
+    printf '%s' "$AUTH_MECH_PLIST" | security authorizationdb write "$right" 2>/dev/null || true
+done
+
+# ---------- 4. install receipt ----------
 
 mkdir -p "/Library/Application Support/Monban"
 date -u +"%Y-%m-%dT%H:%M:%SZ" > "/Library/Application Support/Monban/admin-gate-installed"

@@ -162,6 +162,40 @@ export class KeyInfo {
     }
 }
 
+/**
+ * PluginPinTouchRequest is emitted to the frontend when a plugin asks
+ * the host to prompt for PIN + touch. The frontend shows a PinAuth
+ * dialog and responds via RespondPluginPinTouch(id, pin).
+ */
+export class PluginPinTouchRequest {
+    "id": string;
+    "title": string;
+    "subtitle": string;
+
+    /** Creates a new PluginPinTouchRequest instance. */
+    constructor($$source: Partial<PluginPinTouchRequest> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("subtitle" in $$source)) {
+            this["subtitle"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PluginPinTouchRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PluginPinTouchRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PluginPinTouchRequest($$parsedSource as Partial<PluginPinTouchRequest>);
+    }
+}
+
 export class UpdateInfo {
     "current_version": string;
     "latest_version": string;

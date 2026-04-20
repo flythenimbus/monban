@@ -162,28 +162,24 @@ export function PluginsTab() {
 											)}
 										</div>
 										{p.description && (
-											<div className="text-xs text-text-secondary mt-0.5 truncate">
+											<div className="text-xs text-text-secondary mt-0.5 leading-relaxed">
 												{p.description}
 											</div>
 										)}
 									</div>
 								}
 							>
-								{hasSettings ? (
-									Object.entries(schema).map(([key, spec]) => (
-										<SchemaField
-											key={key}
-											fieldKey={key}
-											spec={spec}
-											value={draft[key] ?? spec.default}
-											onChange={(v) => handleDraftChange(p.name, key, v)}
-										/>
-									))
-								) : (
-									<div className="text-xs text-text-secondary">
-										This plugin has no settings.
-									</div>
-								)}
+								{hasSettings
+									? Object.entries(schema).map(([key, spec]) => (
+											<SchemaField
+												key={key}
+												fieldKey={key}
+												spec={spec}
+												value={draft[key] ?? spec.default}
+												onChange={(v) => handleDraftChange(p.name, key, v)}
+											/>
+										))
+									: null}
 
 								<div className="pt-2 flex justify-end gap-2">
 									<Button
@@ -229,7 +225,7 @@ export function PluginsTab() {
 					{availableNotInstalled.map((a) => (
 						<div
 							key={a.name}
-							className="glass rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+							className="glass rounded-xl px-4 py-3 flex items-start justify-between gap-6"
 						>
 							<div className="min-w-0 flex-1">
 								<div className="flex items-center gap-2">
@@ -241,7 +237,7 @@ export function PluginsTab() {
 									</span>
 								</div>
 								{a.description && (
-									<div className="text-xs text-text-secondary mt-0.5 truncate">
+									<div className="text-xs text-text-secondary mt-0.5 leading-relaxed">
 										{a.description}
 									</div>
 								)}

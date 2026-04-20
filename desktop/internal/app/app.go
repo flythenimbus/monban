@@ -65,9 +65,12 @@ type App struct {
 
 	// Pending plugin-initiated PIN+touch prompts. Keyed by request id so
 	// the frontend can respond/cancel via RespondPluginPinTouch without
-	// needing a stateful RPC channel of its own.
+	// needing a stateful RPC channel of its own. pinTouchMeta mirrors
+	// pinTouchPending but stores the user-visible labels so the
+	// frontend can query them on cold start via GetPendingPluginPinTouch.
 	pinTouchMu      sync.Mutex
 	pinTouchPending map[string]chan pinTouchReply
+	pinTouchMeta    map[string]pinTouchMeta
 }
 
 type pinTouchReply struct {
@@ -79,6 +82,7 @@ func NewApp() *App {
 	a := &App{
 		locked:          true,
 		pinTouchPending: map[string]chan pinTouchReply{},
+		pinTouchMeta:    map[string]pinTouchMeta{},
 	}
 	a.pluginHost = plugin.NewHost(plugin.HostConfig{
 		PluginsDir:         filepath.Join(monban.ConfigDir(), "plugins"),
@@ -119,6 +123,28 @@ type PluginPinTouchRequest struct {
 	Subtitle string `json:"subtitle"`
 }
 
+// GetPendingPluginPinTouch returns the oldest outstanding pin-touch
+// request, or nil if none is pending. Called by the frontend on mount
+// to cover the cold-start case where Monban was launched by the
+// SecurityAgent bundle (open -a Monban) because of an admin-gate
+// prompt — the plugin:pin-touch-request event fires before React
+// subscribes, so without this poll the dialog would never appear.
+func (a *App) GetPendingPluginPinTouch() *PluginPinTouchRequest {
+	a.pinTouchMu.Lock()
+	defer a.pinTouchMu.Unlock()
+	// There's only ever one at a time in practice (the UI blocks on
+	// the first), so this picks whichever iteration lands first.
+	for id, meta := range a.pinTouchMeta {
+		return &PluginPinTouchRequest{ID: id, Title: meta.title, Subtitle: meta.subtitle}
+	}
+	return nil
+}
+
+type pinTouchMeta struct {
+	title    string
+	subtitle string
+}
+
 // handlePluginPinTouch is invoked when a plugin's helper asks the host
 // to prompt the user for PIN + touch (e.g. the admin-gate sudo flow).
 // Emits an event to the frontend, blocks until the user responds or
@@ -129,29 +155,40 @@ func (a *App) handlePluginPinTouch(ctx context.Context, req plugin.PinTouchReque
 
 	a.pinTouchMu.Lock()
 	a.pinTouchPending[id] = reply
+	a.pinTouchMeta[id] = pinTouchMeta{title: req.Title, subtitle: req.Subtitle}
 	a.pinTouchMu.Unlock()
 	defer func() {
 		a.pinTouchMu.Lock()
 		delete(a.pinTouchPending, id)
+		delete(a.pinTouchMeta, id)
 		a.pinTouchMu.Unlock()
 	}()
 
 	if a.window == nil {
 		return nil, fmt.Errorf("no window available to prompt")
 	}
-	// Surface the window so the user can actually see the PinAuth
-	// dialog — Monban hides to tray on close, and a silently-emitted
-	// event from a backgrounded app looks exactly like the plugin is
-	// hanging.
-	showInDock()
-	invokeSync(func() {
-		a.window.Show()
-		a.window.Focus()
-	})
+	// Exit kiosk/fullscreen if we're forced-auth locked; plugin auth is
+	// a separate concern from Monban's own unlock state and we don't
+	// want the regular lock screen to hijack the window.
+	a.ExitFullscreen()
+
+	// Emit the event FIRST, then sleep briefly before showing the
+	// window. This is the 0.4.0 fix for a visible flash: with the
+	// window still hidden, React has time to receive the event (or
+	// resolve its cold-start pending-request poll) and render the
+	// authorize view. When we Show() a moment later, the correct view
+	// is already on screen — the user never sees the lock/admin screen
+	// flicker underneath.
 	a.window.EmitEvent("plugin:pin-touch-request", PluginPinTouchRequest{
 		ID:       id,
 		Title:    req.Title,
 		Subtitle: req.Subtitle,
+	})
+	time.Sleep(200 * time.Millisecond)
+	showInDock()
+	invokeSync(func() {
+		a.window.Show()
+		a.window.Focus()
 	})
 
 	select {
@@ -190,6 +227,21 @@ func (a *App) RespondPluginPinTouch(id string, pin string) error {
 
 	reply <- pinTouchReply{ok: true}
 	return nil
+}
+
+// HideWindow hides Monban's window and drops it from the Dock. Used
+// after a plugin-initiated authorization completes — the user wasn't
+// actively using Monban's UI, they just needed to authenticate, so
+// we should get out of their way. They can bring Monban back via the
+// system-tray menu.
+func (a *App) HideWindow() {
+	if a.window == nil {
+		return
+	}
+	invokeSync(func() {
+		a.window.Hide()
+	})
+	hideFromDock()
 }
 
 // CancelPluginPinTouch is called when the user dismisses a plugin PIN

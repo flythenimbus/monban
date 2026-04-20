@@ -85,6 +85,20 @@ export function FirePluginEvent(event: string, payload: any): $CancellablePromis
 }
 
 /**
+ * GetPendingPluginPinTouch returns the oldest outstanding pin-touch
+ * request, or nil if none is pending. Called by the frontend on mount
+ * to cover the cold-start case where Monban was launched by the
+ * SecurityAgent bundle (open -a Monban) because of an admin-gate
+ * prompt — the plugin:pin-touch-request event fires before React
+ * subscribes, so without this poll the dialog would never appear.
+ */
+export function GetPendingPluginPinTouch(): $CancellablePromise<$models.PluginPinTouchRequest | null> {
+    return $Call.ByID(1021084325).then(($result: any) => {
+        return $$createType3($result);
+    });
+}
+
+/**
  * GetPluginSettings returns the persisted settings blob for the named
  * plugin, or nil if none exist. The returned bytes are the opaque JSON
  * body the plugin authored — the frontend auto-renders against the
@@ -99,7 +113,7 @@ export function GetPluginSettings(name: string): $CancellablePromise<json$0.RawM
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
     return $Call.ByID(3129821644).then(($result: any) => {
-        return $$createType2($result);
+        return $$createType4($result);
     });
 }
 
@@ -108,12 +122,23 @@ export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
  */
 export function GetStatus(): $CancellablePromise<$models.AppStatus> {
     return $Call.ByID(779018179).then(($result: any) => {
-        return $$createType3($result);
+        return $$createType5($result);
     });
 }
 
 export function GetVersion(): $CancellablePromise<string> {
     return $Call.ByID(1806113387);
+}
+
+/**
+ * HideWindow hides Monban's window and drops it from the Dock. Used
+ * after a plugin-initiated authorization completes — the user wasn't
+ * actively using Monban's UI, they just needed to authenticate, so
+ * we should get out of their way. They can bring Monban back via the
+ * system-tray menu.
+ */
+export function HideWindow(): $CancellablePromise<void> {
+    return $Call.ByID(2457366743);
 }
 
 /**
@@ -140,7 +165,7 @@ export function IsRegistered(): $CancellablePromise<boolean> {
  */
 export function ListAvailablePlugins(): $CancellablePromise<$models.AvailablePlugin[]> {
     return $Call.ByID(90493822).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -149,7 +174,7 @@ export function ListAvailablePlugins(): $CancellablePromise<$models.AvailablePlu
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(257323087).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -158,7 +183,7 @@ export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
  */
 export function ListPlugins(): $CancellablePromise<plugin$0.PluginStatus[]> {
     return $Call.ByID(3885862709).then(($result: any) => {
-        return $$createType9($result);
+        return $$createType11($result);
     });
 }
 
@@ -301,11 +326,13 @@ export function UpdateVaultMode(path: string, mode: string, pin: string): $Cance
 // Private type creation functions
 const $$createType0 = $models.DiskSpaceInfo.createFrom;
 const $$createType1 = $models.UpdateInfo.createFrom;
-const $$createType2 = $models.CombinedSettings.createFrom;
-const $$createType3 = $models.AppStatus.createFrom;
-const $$createType4 = $models.AvailablePlugin.createFrom;
-const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = $models.KeyInfo.createFrom;
+const $$createType2 = $models.PluginPinTouchRequest.createFrom;
+const $$createType3 = $Create.Nullable($$createType2);
+const $$createType4 = $models.CombinedSettings.createFrom;
+const $$createType5 = $models.AppStatus.createFrom;
+const $$createType6 = $models.AvailablePlugin.createFrom;
 const $$createType7 = $Create.Array($$createType6);
-const $$createType8 = plugin$0.PluginStatus.createFrom;
+const $$createType8 = $models.KeyInfo.createFrom;
 const $$createType9 = $Create.Array($$createType8);
+const $$createType10 = plugin$0.PluginStatus.createFrom;
+const $$createType11 = $Create.Array($$createType10);

@@ -11,14 +11,6 @@
     "darwin-arm64": "bin/admin-gate"
   },
   "install_pkg": "admin-gate-installer-0.1.0.pkg",
-  "settings": {
-    "strict_mode": {
-      "type": "bool",
-      "default": false,
-      "label": "No password fallback",
-      "description": "Security key is mandatory; don't fall through to macOS password on failure."
-    }
-  },
   "capabilities": [
     "system_paths:/etc/pam.d",
     "system_paths:/Library/Security/SecurityAgentPlugins",

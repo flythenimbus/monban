@@ -47,9 +47,6 @@ type helloResult struct {
 	Ready    bool     `json:"ready"`
 }
 
-type settings struct {
-	StrictMode bool `json:"strict_mode"`
-}
 
 // ---------- helper protocol (this plugin <-> pam-helper over Unix socket) ----------
 
@@ -71,12 +68,11 @@ type helperResponse struct {
 // ---------- state ----------
 
 var (
-	stdoutMu   sync.Mutex                      // serialises writes to host
-	pending    = map[string]chan *message{}    // outstanding request_pin_touch calls keyed by request ID
+	stdoutMu   sync.Mutex                   // serialises writes to host
+	pending    = map[string]chan *message{} // outstanding request_pin_touch calls keyed by request ID
 	pendingMu  sync.Mutex
 	listenerMu sync.Mutex
 	listener   net.Listener
-	cfg        settings
 )
 
 func main() {
@@ -115,11 +111,6 @@ func dispatch(w *bufio.Writer, in *message) {
 
 	switch in.Method {
 	case "hello":
-		var hp struct {
-			Config json.RawMessage `json:"config,omitempty"`
-		}
-		_ = json.Unmarshal(in.Params, &hp)
-		applySettings(&cfg, hp.Config)
 		res, _ := json.Marshal(helloResult{
 			Name:     "admin-gate",
 			Version:  "0.1.0",
@@ -129,19 +120,26 @@ func dispatch(w *bufio.Writer, in *message) {
 		})
 		writeHost(w, message{ID: in.ID, Type: "response", Result: res})
 
-	case "on:app_started":
-		logLine(w, "info", fmt.Sprintf("admin-gate online (strict_mode=%v)", cfg.StrictMode))
+		// Open the helper socket right after hello (rather than on
+		// on:app_started) so the SecurityAgent bundle can connect the
+		// moment Monban's plugin host is up — BEFORE Wails' main
+		// window appears. This eliminates the cold-start race where
+		// the window would render the default lock view before a
+		// queued pin-touch request made it over.
 		if err := startSocketListener(w); err != nil {
 			logLine(w, "error", "socket listener: "+err.Error())
 		}
+
+	case "on:app_started":
+		logLine(w, "info", "admin-gate online")
 
 	case "on:app_shutdown":
 		stopSocketListener(w)
 		logLine(w, "info", "admin-gate offline")
 
 	case "settings.apply":
-		applySettings(&cfg, in.Params)
-		logLine(w, "info", fmt.Sprintf("applied settings: strict_mode=%v", cfg.StrictMode))
+		// No settings surface today — accept and no-op so host-side
+		// plumbing stays happy if any are sent.
 		res, _ := json.Marshal(map[string]any{"ok": true})
 		writeHost(w, message{ID: in.ID, Type: "response", Result: res})
 
@@ -158,21 +156,6 @@ func dispatch(w *bufio.Writer, in *message) {
 				Error: &rpcError{Code: -32601, Message: "method not supported"},
 			})
 		}
-	}
-}
-
-// ---------- settings ----------
-
-func applySettings(s *settings, raw json.RawMessage) {
-	if len(raw) == 0 {
-		return
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return
-	}
-	if v, ok := m["strict_mode"]; ok {
-		_ = json.Unmarshal(v, &s.StrictMode)
 	}
 }
 

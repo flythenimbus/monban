@@ -108,4 +108,17 @@ export const api = {
 
 	cancelPluginPinTouch: (id: string): Promise<void> =>
 		App.CancelPluginPinTouch(id),
+
+	getPendingPluginPinTouch: (): Promise<{
+		id: string;
+		title: string;
+		subtitle: string;
+	} | null> =>
+		App.GetPendingPluginPinTouch() as unknown as Promise<{
+			id: string;
+			title: string;
+			subtitle: string;
+		} | null>,
+
+	hideWindow: (): Promise<void> => App.HideWindow(),
 };

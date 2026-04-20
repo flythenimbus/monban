@@ -65,9 +65,11 @@ for target in "${platforms[@]}"; do
     rm -rf "$payload" "$pkg_scripts"
     mkdir -p "$payload/usr/local/bin"
     mkdir -p "$payload/usr/local/lib/pam"
+    mkdir -p "$payload/Library/Security/SecurityAgentPlugins"
     mkdir -p "$pkg_scripts"
 
     cp installer/postinstall "$pkg_scripts/postinstall"
+    cp installer/gated-rights.sh "$pkg_scripts/gated-rights.sh"
     chmod 0755 "$pkg_scripts/postinstall"
 
     # --- 1. Build the PAM helper with CGo (from the desktop module).
@@ -95,6 +97,16 @@ for target in "${platforms[@]}"; do
         -o "$payload/usr/local/lib/pam/pam_monban.so" \
         native/pam_monban.c \
         -lpam
+
+    # --- 2b. Build the SecurityAgent authorization-plugin bundle.
+    echo "  building monban-auth.bundle ($plat)..."
+    bundle_dir="$payload/Library/Security/SecurityAgentPlugins/monban-auth.bundle"
+    mkdir -p "$bundle_dir/Contents/MacOS"
+    cc -arch "$cc_arch" -bundle \
+        -o "$bundle_dir/Contents/MacOS/monban-auth" \
+        native/monban_auth_plugin.m \
+        -framework Foundation -framework Security -framework SystemConfiguration
+    cp native/Info.plist "$bundle_dir/Contents/"
 
     # --- 3. Build the sub-pkg: payload + scripts.
     PKG_NAME="admin-gate-installer-${VERSION}.pkg"
