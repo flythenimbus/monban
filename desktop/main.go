@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"log"
 
@@ -38,6 +39,7 @@ func main() {
 		},
 		OnShutdown: func() {
 			log.Println("monban: shutting down, locking vaults...")
+			app.ShutdownPluginHost()
 			if err := app.Lock(); err != nil {
 				log.Printf("monban: error locking on shutdown: %v", err)
 			}
@@ -88,8 +90,10 @@ func main() {
 		monbanapp.InstallLaunchAgent()
 	}
 	app.StartDeviceWatcher()
+	app.StartPluginHost(context.Background())
 
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
+		app.FirePluginEvent("on:app_started", nil)
 		if app.IsRegistered() {
 			settings := app.GetSettings()
 			if settings.ForceAuthentication {

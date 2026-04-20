@@ -1,0 +1,16 @@
+{
+  "name": "hello-world",
+  "version": "0.1.0",
+  "monban_api": "0.1",
+  "description": "Smoke-test plugin. Logs a line on app_started and app_shutdown.",
+  "platforms": ["darwin-arm64", "darwin-amd64", "linux-amd64", "linux-arm64"],
+  "kind": ["observer"],
+  "hooks": ["on:app_started", "on:app_shutdown"],
+  "binary": {
+    "darwin-arm64": "bin/hello-world",
+    "darwin-amd64": "bin/hello-world",
+    "linux-amd64":  "bin/hello-world",
+    "linux-arm64":  "bin/hello-world"
+  },
+  "capabilities": []
+}

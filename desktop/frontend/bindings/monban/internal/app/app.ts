@@ -10,7 +10,7 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 import * as application$0 from "../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as monban$0 from "../monban/models.js";
+import * as plugin$0 from "../plugin/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -21,13 +21,6 @@ import * as $models from "./models.js";
  */
 export function AddPath(path: string, pin: string): $CancellablePromise<void> {
     return $Call.ByID(2105985761, path, pin);
-}
-
-/**
- * CancelIPCAuth is called when the user dismisses the IPC auth dialog.
- */
-export function CancelIPCAuth(): $CancellablePromise<void> {
-    return $Call.ByID(4237968635);
 }
 
 /**
@@ -72,15 +65,11 @@ export function ExitFullscreen(): $CancellablePromise<void> {
 }
 
 /**
- * GetPendingIPCAuth returns a snapshot of the current in-flight IPC auth
- * request, or nil if none is active. Called by the frontend on mount to
- * handle the cold-start case where the plugin connected before Events.On
- * subscribed to ipc:auth-request.
+ * FirePluginEvent dispatches a lifecycle notify to subscribed plugins.
+ * P1 only emits on:app_started and on:app_shutdown.
  */
-export function GetPendingIPCAuth(): $CancellablePromise<monban$0.IPCRequest | null> {
-    return $Call.ByID(163305684).then(($result: any) => {
-        return $$createType3($result);
-    });
+export function FirePluginEvent(event: string, payload: any): $CancellablePromise<void> {
+    return $Call.ByID(1165557056, event, payload);
 }
 
 /**
@@ -88,7 +77,7 @@ export function GetPendingIPCAuth(): $CancellablePromise<monban$0.IPCRequest | n
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
     return $Call.ByID(3129821644).then(($result: any) => {
-        return $$createType4($result);
+        return $$createType2($result);
     });
 }
 
@@ -97,27 +86,12 @@ export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
  */
 export function GetStatus(): $CancellablePromise<$models.AppStatus> {
     return $Call.ByID(779018179).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType3($result);
     });
 }
 
 export function GetVersion(): $CancellablePromise<string> {
     return $Call.ByID(1806113387);
-}
-
-/**
- * HandleIPCAuth is called by the frontend after the user enters their PIN.
- */
-export function HandleIPCAuth(pin: string): $CancellablePromise<void> {
-    return $Call.ByID(1932996403, pin);
-}
-
-/**
- * HideToTray hides the window back to the system tray.
- * If the app is locked with force auth, re-enters fullscreen instead.
- */
-export function HideToTray(): $CancellablePromise<void> {
-    return $Call.ByID(4144683102);
 }
 
 export function IsLocked(): $CancellablePromise<boolean> {
@@ -133,6 +107,15 @@ export function IsRegistered(): $CancellablePromise<boolean> {
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(257323087).then(($result: any) => {
+        return $$createType5($result);
+    });
+}
+
+/**
+ * ListPlugins returns the current set of loaded plugins for the admin UI.
+ */
+export function ListPlugins(): $CancellablePromise<plugin$0.PluginStatus[]> {
+    return $Call.ByID(3885862709).then(($result: any) => {
         return $$createType7($result);
     });
 }
@@ -195,6 +178,14 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
 }
 
 /**
+ * ShutdownPluginHost notifies every loaded plugin that the app is exiting,
+ * then terminates each subprocess with a grace period.
+ */
+export function ShutdownPluginHost(): $CancellablePromise<void> {
+    return $Call.ByID(3910072988);
+}
+
+/**
  * StartDeviceWatcher polls for security key presence and counter file integrity,
  * locking vaults if either the key is removed or the counter file is deleted.
  */
@@ -203,17 +194,13 @@ export function StartDeviceWatcher(): $CancellablePromise<void> {
 }
 
 /**
- * StartIPCListener begins listening for IPC auth requests on a Unix socket.
+ * StartPluginHost loads every installed plugin from the plugins directory,
+ * verifies signatures, spawns subprocesses, and performs the hello
+ * handshake. Call early in main() so plugins are ready before the first
+ * lifecycle event fires.
  */
-export function StartIPCListener(): $CancellablePromise<void> {
-    return $Call.ByID(1691723153);
-}
-
-/**
- * StopIPCListener shuts down the IPC listener and cleans up the socket.
- */
-export function StopIPCListener(): $CancellablePromise<void> {
-    return $Call.ByID(1432751);
+export function StartPluginHost(): $CancellablePromise<void> {
+    return $Call.ByID(4123584460);
 }
 
 /**
@@ -245,9 +232,9 @@ export function UpdateVaultMode(path: string, mode: string, pin: string): $Cance
 // Private type creation functions
 const $$createType0 = $models.DiskSpaceInfo.createFrom;
 const $$createType1 = $models.UpdateInfo.createFrom;
-const $$createType2 = monban$0.IPCRequest.createFrom;
-const $$createType3 = $Create.Nullable($$createType2);
-const $$createType4 = $models.CombinedSettings.createFrom;
-const $$createType5 = $models.AppStatus.createFrom;
-const $$createType6 = $models.KeyInfo.createFrom;
+const $$createType2 = $models.CombinedSettings.createFrom;
+const $$createType3 = $models.AppStatus.createFrom;
+const $$createType4 = $models.KeyInfo.createFrom;
+const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = plugin$0.PluginStatus.createFrom;
 const $$createType7 = $Create.Array($$createType6);

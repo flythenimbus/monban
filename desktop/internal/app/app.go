@@ -1,10 +1,15 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"monban/internal/monban"
+	"monban/internal/plugin"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -48,10 +53,47 @@ type App struct {
 	masterSecret []byte // in-memory only, zeroed on lock
 	encKey       []byte // derived file encryption key, zeroed on lock
 	window       *application.WebviewWindow
+	pluginHost   *plugin.Host
 }
 
 func NewApp() *App {
-	return &App{locked: true}
+	return &App{
+		locked: true,
+		pluginHost: plugin.NewHost(plugin.HostConfig{
+			PluginsDir:  filepath.Join(monban.ConfigDir(), "plugins"),
+			HostVersion: Version,
+		}),
+	}
+}
+
+// StartPluginHost loads every installed plugin from the plugins directory,
+// verifies signatures, spawns subprocesses, and performs the hello
+// handshake. Call early in main() so plugins are ready before the first
+// lifecycle event fires.
+func (a *App) StartPluginHost(ctx context.Context) {
+	if err := a.pluginHost.Start(ctx); err != nil {
+		log.Printf("monban: plugin host start: %v", err)
+	}
+}
+
+// FirePluginEvent dispatches a lifecycle notify to subscribed plugins.
+// P1 only emits on:app_started and on:app_shutdown.
+func (a *App) FirePluginEvent(event string, payload any) {
+	a.pluginHost.Fire(event, payload)
+}
+
+// ShutdownPluginHost notifies every loaded plugin that the app is exiting,
+// then terminates each subprocess with a grace period.
+func (a *App) ShutdownPluginHost() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	a.pluginHost.Fire("on:app_shutdown", nil)
+	a.pluginHost.Shutdown(ctx)
+}
+
+// ListPlugins returns the current set of loaded plugins for the admin UI.
+func (a *App) ListPlugins() []plugin.PluginStatus {
+	return a.pluginHost.List()
 }
 
 func (a *App) SetWindow(w *application.WebviewWindow) {
