@@ -63,14 +63,24 @@ type App struct {
 }
 
 func NewApp() *App {
-	return &App{
-		locked: true,
-		pluginHost: plugin.NewHost(plugin.HostConfig{
-			PluginsDir:         filepath.Join(monban.ConfigDir(), "plugins"),
-			HostVersion:        Version,
-			LoadPluginSettings: loadPluginSettingsFromConfig,
-		}),
-	}
+	a := &App{locked: true}
+	a.pluginHost = plugin.NewHost(plugin.HostConfig{
+		PluginsDir:         filepath.Join(monban.ConfigDir(), "plugins"),
+		HostVersion:        Version,
+		LoadPluginSettings: loadPluginSettingsFromConfig,
+		OnRequestPinTouch: func(ctx context.Context, req plugin.PinTouchRequest) (*plugin.PinTouchResult, error) {
+			return a.handlePluginPinTouch(ctx, req)
+		},
+	})
+	return a
+}
+
+// handlePluginPinTouch is invoked when a plugin's helper asks the host
+// to prompt the user for PIN + touch — typically the admin-gate
+// SecurityAgent flow. P3a only scaffolds the RPC pipe; the UI wiring
+// comes in P3b once the admin-gate plugin actually needs it.
+func (a *App) handlePluginPinTouch(_ context.Context, _ plugin.PinTouchRequest) (*plugin.PinTouchResult, error) {
+	return nil, fmt.Errorf("request_pin_touch not wired to UI yet")
 }
 
 // loadPluginSettingsFromConfig reads the persisted settings blob for name
@@ -118,6 +128,7 @@ func (a *App) ListPlugins() []plugin.PluginStatus {
 // augmented with a flag telling the UI whether it's already installed.
 type AvailablePlugin struct {
 	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
 	Version     string `json:"version"`
 	Description string `json:"description"`
 	Installed   bool   `json:"installed"`
@@ -142,6 +153,7 @@ func (a *App) ListAvailablePlugins() []AvailablePlugin {
 		}
 		out = append(out, AvailablePlugin{
 			Name:        e.Name,
+			DisplayName: e.DisplayTitle(),
 			Version:     e.Version,
 			Description: e.Description,
 			Installed:   installed[e.Name],

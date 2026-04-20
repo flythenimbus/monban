@@ -44,9 +44,10 @@ type Plugin struct {
 	hello  *HelloResult
 	cancel context.CancelFunc
 
-	mu      sync.Mutex
-	pending map[string]chan *Message
-	closed  bool
+	mu          sync.Mutex
+	pending     map[string]chan *Message
+	closed      bool
+	terminating bool // set true when the host is intentionally shutting the plugin down
 }
 
 // HostConfig is the configuration handed to NewHost.
@@ -64,12 +65,46 @@ type HostConfig struct {
 	// result is passed as the hello handshake's config field. Return
 	// nil for plugins with no stored settings.
 	LoadPluginSettings func(name string) json.RawMessage
+	// OnRequestPinTouch, if set, is invoked when a plugin sends the
+	// request_pin_touch RPC — typically when the plugin's own helper
+	// (e.g. the admin-gate SecurityAgent plugin) needs the Monban UI
+	// to prompt the user for PIN + touch. The host blocks the plugin's
+	// RPC until this returns. Return an error to fail the plugin's
+	// request.
+	OnRequestPinTouch func(ctx context.Context, req PinTouchRequest) (*PinTouchResult, error)
+}
+
+// PinTouchRequest is the parameters of a plugin-initiated PIN+touch
+// request. Shown to the user so they know which plugin is asking and
+// why before they authenticate.
+type PinTouchRequest struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+}
+
+// PinTouchResult is the response sent back to a plugin after a
+// request_pin_touch. UID/Username are populated for plugins like the
+// admin-gate helper that need to know which user was authenticated.
+type PinTouchResult struct {
+	OK       bool   `json:"ok"`
+	UID      int    `json:"uid,omitempty"`
+	Username string `json:"username,omitempty"`
 }
 
 // Host manages the set of loaded plugin subprocesses.
 type Host struct {
 	cfg HostConfig
 	log *log.Logger
+
+	// lifetimeCtx scopes every spawned plugin subprocess to the Host's
+	// own lifetime — cancelled only by Shutdown. This is deliberately
+	// separate from the ctx callers pass into Start/LoadOne, which is
+	// only used for the hello-handshake timeout. Tying subprocesses to
+	// the caller's ctx would kill them as soon as the calling function
+	// returned (e.g. App.InstallPlugin's 15 s loadCtx firing its
+	// deferred cancel right after a successful install).
+	lifetimeCtx    context.Context
+	lifetimeCancel context.CancelFunc
 
 	mu      sync.Mutex
 	plugins map[string]*Plugin
@@ -81,12 +116,20 @@ func NewHost(cfg HostConfig) *Host {
 	if lg == nil {
 		lg = log.Default()
 	}
-	return &Host{cfg: cfg, log: lg, plugins: map[string]*Plugin{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Host{
+		cfg:            cfg,
+		log:            lg,
+		lifetimeCtx:    ctx,
+		lifetimeCancel: cancel,
+		plugins:        map[string]*Plugin{},
+	}
 }
 
 // PluginStatus is a read-only snapshot of a loaded plugin for UI/API use.
 type PluginStatus struct {
 	Name        string          `json:"name"`
+	DisplayName string          `json:"display_name"`
 	Version     string          `json:"version"`
 	Description string          `json:"description,omitempty"`
 	Kind        []string        `json:"kind"`
@@ -104,6 +147,7 @@ func (h *Host) List() []PluginStatus {
 	for _, p := range h.plugins {
 		out = append(out, PluginStatus{
 			Name:        p.Manifest.Name,
+			DisplayName: p.Manifest.DisplayTitle(),
 			Version:     p.Manifest.Version,
 			Description: p.Manifest.Description,
 			Kind:        p.Manifest.Kind,
@@ -195,8 +239,12 @@ func (h *Host) loadOne(ctx context.Context, dir string) error {
 // spawn starts the plugin subprocess, wires the RPC codec, runs the hello
 // handshake, and starts the read loop. On any error the subprocess is
 // terminated and the error returned.
-func (h *Host) spawn(ctx context.Context, m *Manifest, dir, binPath string) (*Plugin, error) {
-	pluginCtx, cancel := context.WithCancel(ctx)
+//
+// The caller's ctx scopes only the hello handshake; the subprocess itself
+// is tied to the Host's lifetimeCtx so it survives past the caller's
+// deferred cancels.
+func (h *Host) spawn(helloCtx context.Context, m *Manifest, dir, binPath string) (*Plugin, error) {
+	pluginCtx, cancel := context.WithCancel(h.lifetimeCtx)
 
 	cmd := exec.CommandContext(pluginCtx, binPath)
 	cmd.Dir = dir
@@ -238,11 +286,12 @@ func (h *Host) spawn(ctx context.Context, m *Manifest, dir, binPath string) (*Pl
 	// read loop — started before hello so we can catch its response
 	go h.readLoop(p)
 
-	// hello handshake with timeout
-	helloCtx, helloCancel := context.WithTimeout(pluginCtx, 10*time.Second)
-	defer helloCancel()
+	// hello handshake: bounded by whichever comes first — the caller's
+	// ctx (15 s from App.InstallPlugin) or a generous 10 s ceiling.
+	hsCtx, hsCancel := context.WithTimeout(helloCtx, 10*time.Second)
+	defer hsCancel()
 
-	result, err := h.hello(helloCtx, p)
+	result, err := h.hello(hsCtx, p)
 	if err != nil {
 		_ = p.terminate(2 * time.Second)
 		return nil, fmt.Errorf("hello: %w", err)
@@ -287,10 +336,14 @@ func (h *Host) hello(ctx context.Context, p *Plugin) (*HelloResult, error) {
 func (h *Host) readLoop(p *Plugin) {
 	defer func() {
 		p.mu.Lock()
+		closedByShutdown := p.terminating
 		p.closed = true
 		pend := p.pending
 		p.pending = nil
 		p.mu.Unlock()
+		if !closedByShutdown {
+			h.log.Printf("plugin[%s]: subprocess exited unexpectedly", p.Manifest.Name)
+		}
 		for _, ch := range pend {
 			close(ch)
 		}
@@ -319,9 +372,7 @@ func (h *Host) readLoop(p *Plugin) {
 		case TypeNotify:
 			h.handleNotify(p, msg)
 		case TypeRequest:
-			// Plugin-initiated requests (e.g. ui.open_url) are not
-			// implemented in P1 — log and ignore.
-			h.log.Printf("plugin[%s]: unsupported request %q in P1", p.Manifest.Name, msg.Method)
+			go h.handlePluginRequest(p, msg)
 		default:
 			h.log.Printf("plugin[%s]: unknown message type %q", p.Manifest.Name, msg.Type)
 		}
@@ -338,8 +389,57 @@ func (h *Host) handleNotify(p *Plugin, msg *Message) {
 		_ = json.Unmarshal(msg.Params, &params)
 		h.log.Printf("plugin[%s] %s: %s", p.Manifest.Name, params.Level, params.Message)
 	default:
-		h.log.Printf("plugin[%s]: unhandled notify %q (P1)", p.Manifest.Name, msg.Method)
+		h.log.Printf("plugin[%s]: unhandled notify %q", p.Manifest.Name, msg.Method)
 	}
+}
+
+// handlePluginRequest processes a plugin-initiated request. Runs in its
+// own goroutine so the plugin's read loop isn't blocked while the host
+// goes off to the UI thread. The reply is written back over the same
+// codec, correlated by the request's ID.
+func (h *Host) handlePluginRequest(p *Plugin, msg *Message) {
+	switch msg.Method {
+	case "request_pin_touch":
+		h.handleRequestPinTouch(p, msg)
+	default:
+		h.replyError(p, msg.ID, -32601, fmt.Sprintf("method %q not supported", msg.Method))
+	}
+}
+
+func (h *Host) handleRequestPinTouch(p *Plugin, msg *Message) {
+	if h.cfg.OnRequestPinTouch == nil {
+		h.replyError(p, msg.ID, -32601, "request_pin_touch not supported by host")
+		return
+	}
+
+	var req PinTouchRequest
+	if len(msg.Params) > 0 {
+		if err := json.Unmarshal(msg.Params, &req); err != nil {
+			h.replyError(p, msg.ID, -32602, "invalid params: "+err.Error())
+			return
+		}
+	}
+
+	// Give the UI up to 2 minutes to collect a PIN+touch; anything
+	// longer is almost certainly a stuck prompt.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	result, err := h.cfg.OnRequestPinTouch(ctx, req)
+	if err != nil {
+		h.replyError(p, msg.ID, -32000, err.Error())
+		return
+	}
+	resultBytes, _ := json.Marshal(result)
+	_ = p.codec.Write(&Message{ID: msg.ID, Type: TypeResponse, Result: resultBytes})
+}
+
+func (h *Host) replyError(p *Plugin, id string, code int, message string) {
+	_ = p.codec.Write(&Message{
+		ID:    id,
+		Type:  TypeError,
+		Error: &RPCError{Code: code, Message: message},
+	})
 }
 
 // Reconfigure sends a settings.apply request to the named plugin and
@@ -407,6 +507,10 @@ func (h *Host) Shutdown(ctx context.Context) {
 		}(p)
 	}
 	wg.Wait()
+
+	// Stragglers attached via lifetimeCtx get signalled now in case
+	// any plugin outlived terminate() somehow.
+	h.lifetimeCancel()
 }
 
 // request sends a request and blocks until the response arrives or the
@@ -462,6 +566,10 @@ func (p *Plugin) notify(method string, params any) error {
 
 // terminate waits grace for a clean exit, then kills.
 func (p *Plugin) terminate(grace time.Duration) error {
+	p.mu.Lock()
+	p.terminating = true
+	p.mu.Unlock()
+
 	done := make(chan error, 1)
 	go func() { done <- p.cmd.Wait() }()
 	select {

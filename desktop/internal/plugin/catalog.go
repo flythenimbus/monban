@@ -23,6 +23,7 @@ type Catalog struct {
 // at install time based on the running host.
 type CatalogEntry struct {
 	Name           string   `json:"name"`
+	DisplayName    string   `json:"display_name,omitempty"`
 	Version        string   `json:"version"`
 	Description    string   `json:"description,omitempty"`
 	Platforms      []string `json:"platforms"`
@@ -30,6 +31,14 @@ type CatalogEntry struct {
 	ManifestSigURL string   `json:"manifest_sig_url"`
 	TarballURL     string   `json:"tarball_url"`
 	TarballSigURL  string   `json:"tarball_sig_url"`
+}
+
+// DisplayTitle returns DisplayName if set, otherwise falls back to Name.
+func (e *CatalogEntry) DisplayTitle() string {
+	if e.DisplayName != "" {
+		return e.DisplayName
+	}
+	return e.Name
 }
 
 // LoadCatalog parses the embedded catalog.

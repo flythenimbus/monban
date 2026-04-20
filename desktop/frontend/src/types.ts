@@ -71,6 +71,7 @@ export type PluginSettingsSchema = Record<string, PluginSettingSpec>;
 
 export interface PluginStatus {
 	name: string;
+	display_name: string;
 	version: string;
 	description?: string;
 	kind: string[];
@@ -82,6 +83,7 @@ export interface PluginStatus {
 
 export interface AvailablePlugin {
 	name: string;
+	display_name: string;
 	version: string;
 	description: string;
 	installed: boolean;

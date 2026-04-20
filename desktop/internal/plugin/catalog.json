@@ -3,6 +3,7 @@
   "plugins": [
     {
       "name": "hello-world",
+      "display_name": "Hello World",
       "version": "0.1.0",
       "description": "Smoke-test plugin. Logs a line on app_started and app_shutdown.",
       "platforms": ["darwin-arm64", "darwin-amd64", "linux-amd64", "linux-arm64"],
@@ -10,6 +11,17 @@
       "manifest_sig_url": "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/hello-world-{version}-manifest.json.sig",
       "tarball_url":      "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/hello-world-{version}-{platform}.tar.gz",
       "tarball_sig_url":  "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/hello-world-{version}-{platform}.tar.gz.sig"
+    },
+    {
+      "name": "admin-gate",
+      "display_name": "Admin Gate",
+      "version": "0.1.0",
+      "description": "Gate sudo and macOS admin dialogs behind your YubiKey.",
+      "platforms": ["darwin-arm64", "darwin-amd64"],
+      "manifest_url":     "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-manifest.json",
+      "manifest_sig_url": "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-manifest.json.sig",
+      "tarball_url":      "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-{platform}.tar.gz",
+      "tarball_sig_url":  "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-{platform}.tar.gz.sig"
     }
   ]
 }

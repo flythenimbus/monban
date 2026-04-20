@@ -212,3 +212,113 @@ func TestCatalogEntryExpand(t *testing.T) {
 		t.Errorf("tarball URL = %q, want %q", tarball, want)
 	}
 }
+
+// TestInstallerRunsInstallPkgWhenDeclared verifies that a manifest
+// declaring install_pkg causes the installer's RunInstallPkg hook to
+// fire with the correct path after tarball extraction. This is the
+// admin-gate path — the host hands the .pkg to `installer -pkg`
+// (via osascript) after the payload is in place.
+func TestInstallerRunsInstallPkgWhenDeclared(t *testing.T) {
+	priv := withTempKey(t)
+
+	pkgFile := "installer.pkg"
+	manifest := map[string]any{
+		"name":        "admin-gate-fake",
+		"version":     "1.0.0",
+		"monban_api":  HostAPIVersion,
+		"platforms":   []string{CurrentPlatform()},
+		"kind":        []string{"system"},
+		"binary":      map[string]string{CurrentPlatform(): "bin/admin-gate"},
+		"install_pkg": pkgFile,
+	}
+	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
+	manifestSig := ed25519.Sign(priv, manifestBytes)
+
+	tarball := buildTarGz(t, map[string][]byte{
+		"bin/admin-gate": []byte("binary"),
+		pkgFile:          []byte("fake pkg payload"),
+	})
+	tarballSig := ed25519.Sign(priv, tarball)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/m", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(manifestBytes) })
+	mux.HandleFunc("/ms", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(manifestSig) })
+	mux.HandleFunc("/t", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tarball) })
+	mux.HandleFunc("/ts", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tarballSig) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	entry := &CatalogEntry{
+		Name: "admin-gate-fake", Version: "1.0.0",
+		Platforms:      []string{CurrentPlatform()},
+		ManifestURL:    srv.URL + "/m",
+		ManifestSigURL: srv.URL + "/ms",
+		TarballURL:     srv.URL + "/t",
+		TarballSigURL:  srv.URL + "/ts",
+	}
+
+	var calledWith string
+	inst := NewInstaller(t.TempDir())
+	inst.RunInstallPkg = func(_ context.Context, p string) error {
+		calledWith = p
+		return nil
+	}
+
+	if _, err := inst.Install(context.Background(), entry); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if calledWith == "" {
+		t.Fatal("RunInstallPkg was never called")
+	}
+	if !strings.HasSuffix(calledWith, pkgFile) {
+		t.Errorf("RunInstallPkg called with %q, expected suffix %q", calledWith, pkgFile)
+	}
+	if _, err := os.Stat(calledWith); err != nil {
+		t.Errorf("install_pkg path does not exist on disk: %v", err)
+	}
+}
+
+// TestInstallerFailsWhenInstallPkgMissing verifies we surface a clear
+// error if a manifest declares install_pkg but the tarball didn't
+// actually contain it.
+func TestInstallerFailsWhenInstallPkgMissing(t *testing.T) {
+	priv := withTempKey(t)
+
+	manifest := map[string]any{
+		"name":        "missing-pkg",
+		"version":     "1.0.0",
+		"monban_api":  HostAPIVersion,
+		"platforms":   []string{CurrentPlatform()},
+		"kind":        []string{"system"},
+		"binary":      map[string]string{CurrentPlatform(): "bin/x"},
+		"install_pkg": "not-in-tarball.pkg",
+	}
+	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
+	manifestSig := ed25519.Sign(priv, manifestBytes)
+	tarball := buildTarGz(t, map[string][]byte{"bin/x": []byte("x")})
+	tarballSig := ed25519.Sign(priv, tarball)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/m", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(manifestBytes) })
+	mux.HandleFunc("/ms", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(manifestSig) })
+	mux.HandleFunc("/t", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tarball) })
+	mux.HandleFunc("/ts", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tarballSig) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	entry := &CatalogEntry{
+		Name: "missing-pkg", Version: "1.0.0",
+		Platforms:      []string{CurrentPlatform()},
+		ManifestURL:    srv.URL + "/m",
+		ManifestSigURL: srv.URL + "/ms",
+		TarballURL:     srv.URL + "/t",
+		TarballSigURL:  srv.URL + "/ts",
+	}
+	inst := NewInstaller(t.TempDir())
+	inst.RunInstallPkg = func(context.Context, string) error { return nil }
+
+	_, err := inst.Install(context.Background(), entry)
+	if err == nil || !strings.Contains(err.Error(), "install_pkg") {
+		t.Fatalf("expected install_pkg-not-in-payload error, got %v", err)
+	}
+}

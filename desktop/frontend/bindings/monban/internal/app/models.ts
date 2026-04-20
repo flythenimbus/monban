@@ -44,6 +44,7 @@ export class AppStatus {
  */
 export class AvailablePlugin {
     "name": string;
+    "display_name": string;
     "version": string;
     "description": string;
     "installed": boolean;
@@ -52,6 +53,9 @@ export class AvailablePlugin {
     constructor($$source: Partial<AvailablePlugin> = {}) {
         if (!("name" in $$source)) {
             this["name"] = "";
+        }
+        if (!("display_name" in $$source)) {
+            this["display_name"] = "";
         }
         if (!("version" in $$source)) {
             this["version"] = "";

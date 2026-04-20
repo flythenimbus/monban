@@ -9,7 +9,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -20,14 +22,19 @@ import (
 type Installer struct {
 	PluginsDir string
 	HTTPClient *http.Client
+	// RunInstallPkg runs a macOS .pkg as root. Injectable so tests can
+	// assert we invoke it without actually running anything system-wide.
+	// Defaults to runInstallPkgViaOsascript.
+	RunInstallPkg func(ctx context.Context, pkgPath string) error
 }
 
 // NewInstaller returns an Installer with sensible defaults. Pass an
 // explicit client for tests.
 func NewInstaller(pluginsDir string) *Installer {
 	return &Installer{
-		PluginsDir: pluginsDir,
-		HTTPClient: &http.Client{Timeout: 60 * time.Second},
+		PluginsDir:    pluginsDir,
+		HTTPClient:    &http.Client{Timeout: 60 * time.Second},
+		RunInstallPkg: runInstallPkgViaOsascript,
 	}
 }
 
@@ -118,7 +125,51 @@ func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (string, error
 		return "", fmt.Errorf("commit install: %w", err)
 	}
 	cleanup = false
+
+	// Post-extract hook: run the manifest-declared installer .pkg if any.
+	// The admin-gate plugin uses this to write /etc/pam.d/ entries and
+	// rebind authorizationdb — operations that need root and are
+	// expected to trigger a standard macOS admin password prompt.
+	if m.InstallPkg != "" {
+		pkgPath := filepath.Join(final, m.InstallPkg)
+		if _, err := os.Stat(pkgPath); err != nil {
+			return "", fmt.Errorf("declared install_pkg %q not in payload: %w", m.InstallPkg, err)
+		}
+		if i.RunInstallPkg == nil {
+			return "", fmt.Errorf("plugin requires install_pkg but host has no runner")
+		}
+		if err := i.RunInstallPkg(ctx, pkgPath); err != nil {
+			return "", fmt.Errorf("run install_pkg: %w", err)
+		}
+	}
+
 	return m.Name, nil
+}
+
+// runInstallPkgViaOsascript invokes /usr/sbin/installer via AppleScript's
+// `do shell script ... with administrator privileges`, which triggers
+// the standard macOS admin-password prompt. This is the Apple-free
+// install path: the tarball is already ed25519-verified, so Gatekeeper
+// isn't the trust boundary — the signed tarball is.
+func runInstallPkgViaOsascript(ctx context.Context, pkgPath string) error {
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("install_pkg is macOS-only (got %s)", runtime.GOOS)
+	}
+	// AppleScript's `quoted form of` handles shell quoting for us, but
+	// we still have to AppleScript-escape the path before splicing into
+	// the script source.
+	safe := strings.ReplaceAll(pkgPath, `\`, `\\`)
+	safe = strings.ReplaceAll(safe, `"`, `\"`)
+	script := fmt.Sprintf(
+		`do shell script "/usr/sbin/installer -pkg " & quoted form of "%s" & " -target /" with administrator privileges`,
+		safe,
+	)
+	cmd := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("installer: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // fetch performs an HTTP GET with a size cap and returns the body bytes.

@@ -13,6 +13,7 @@ import (
 // capabilities. Loaded from manifest.json inside the plugin directory.
 type Manifest struct {
 	Name         string            `json:"name"`
+	DisplayName  string            `json:"display_name,omitempty"`
 	Version      string            `json:"version"`
 	MonbanAPI    string            `json:"monban_api"`
 	Description  string            `json:"description,omitempty"`
@@ -27,6 +28,16 @@ type Manifest struct {
 	UIPanel      string            `json:"ui_panel,omitempty"`
 	Settings     json.RawMessage   `json:"settings,omitempty"`
 	Capabilities []string          `json:"capabilities,omitempty"`
+}
+
+// DisplayTitle returns DisplayName if set, otherwise falls back to Name.
+// UI code should always go through this so plugins without a declared
+// display name still render with something sensible.
+func (m *Manifest) DisplayTitle() string {
+	if m.DisplayName != "" {
+		return m.DisplayName
+	}
+	return m.Name
 }
 
 // ProvideSpec declares a provider capability offered by the plugin.

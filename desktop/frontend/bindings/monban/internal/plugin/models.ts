@@ -14,6 +14,7 @@ import * as json$0 from "../../../encoding/json/models.js";
  */
 export class PluginStatus {
     "name": string;
+    "display_name": string;
     "version": string;
     "description"?: string;
     "kind": string[];
@@ -26,6 +27,9 @@ export class PluginStatus {
     constructor($$source: Partial<PluginStatus> = {}) {
         if (!("name" in $$source)) {
             this["name"] = "";
+        }
+        if (!("display_name" in $$source)) {
+            this["display_name"] = "";
         }
         if (!("version" in $$source)) {
             this["version"] = "";
@@ -47,14 +51,14 @@ export class PluginStatus {
      * Creates a new PluginStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): PluginStatus {
-        const $$createField3_0 = $$createType0;
         const $$createField4_0 = $$createType0;
+        const $$createField5_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("kind" in $$parsedSource) {
-            $$parsedSource["kind"] = $$createField3_0($$parsedSource["kind"]);
+            $$parsedSource["kind"] = $$createField4_0($$parsedSource["kind"]);
         }
         if ("hooks" in $$parsedSource) {
-            $$parsedSource["hooks"] = $$createField4_0($$parsedSource["hooks"]);
+            $$parsedSource["hooks"] = $$createField5_0($$parsedSource["hooks"]);
         }
         return new PluginStatus($$parsedSource as Partial<PluginStatus>);
     }

@@ -1,0 +1,5 @@
+bin/
+dist/*.tar.gz
+dist/*.sig
+dist/*.pkg
+dist/stage/

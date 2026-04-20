@@ -18,15 +18,18 @@ type SettingsMap = Record<string, unknown>;
 
 interface PendingSave {
 	name: string;
+	displayName: string;
 	settings: SettingsMap;
 }
 
 interface PendingUninstall {
 	name: string;
+	displayName: string;
 }
 
 interface PendingInstall {
 	name: string;
+	displayName: string;
 }
 
 export function PluginsTab() {
@@ -147,7 +150,7 @@ export function PluginsTab() {
 									<div>
 										<div className="flex items-center gap-2">
 											<span className="text-sm font-medium text-text">
-												{p.name}
+												{p.display_name || p.name}
 											</span>
 											<span className="text-xs text-text-secondary">
 												v{p.version}
@@ -186,7 +189,12 @@ export function PluginsTab() {
 									<Button
 										variant="danger"
 										size="sm"
-										onClick={() => setPendingUninstall({ name: p.name })}
+										onClick={() =>
+											setPendingUninstall({
+												name: p.name,
+												displayName: p.display_name || p.name,
+											})
+										}
 										disabled={pendingUninstall !== null}
 									>
 										Uninstall
@@ -195,7 +203,11 @@ export function PluginsTab() {
 										<Button
 											size="sm"
 											onClick={() =>
-												setPendingSave({ name: p.name, settings: draft })
+												setPendingSave({
+													name: p.name,
+													displayName: p.display_name || p.name,
+													settings: draft,
+												})
 											}
 											disabled={pendingSave !== null}
 										>
@@ -222,7 +234,7 @@ export function PluginsTab() {
 							<div className="min-w-0 flex-1">
 								<div className="flex items-center gap-2">
 									<span className="text-sm font-medium text-text">
-										{a.name}
+										{a.display_name || a.name}
 									</span>
 									<span className="text-xs text-text-secondary">
 										v{a.version}
@@ -236,7 +248,12 @@ export function PluginsTab() {
 							</div>
 							<Button
 								size="sm"
-								onClick={() => setPendingInstall({ name: a.name })}
+								onClick={() =>
+									setPendingInstall({
+										name: a.name,
+										displayName: a.display_name || a.name,
+									})
+								}
 								disabled={pendingInstall !== null || installing !== null}
 							>
 								{installing === a.name ? "Installing…" : "Install"}
@@ -254,7 +271,7 @@ export function PluginsTab() {
 
 			{pendingSave && (
 				<PinAuth
-					label={`Authenticate to save ${pendingSave.name} settings`}
+					label={`Authenticate to save ${pendingSave.displayName} settings`}
 					onSubmit={confirmSave}
 					onCancel={() => setPendingSave(null)}
 				/>
@@ -262,7 +279,7 @@ export function PluginsTab() {
 
 			{pendingUninstall && (
 				<PinAuth
-					label={`Authenticate to uninstall ${pendingUninstall.name}`}
+					label={`Authenticate to uninstall ${pendingUninstall.displayName}`}
 					onSubmit={confirmUninstall}
 					onCancel={() => setPendingUninstall(null)}
 				/>
@@ -270,7 +287,7 @@ export function PluginsTab() {
 
 			{pendingInstall && (
 				<PinAuth
-					label={`Authenticate to install ${pendingInstall.name}`}
+					label={`Authenticate to install ${pendingInstall.displayName}`}
 					onSubmit={confirmInstall}
 					onCancel={() => setPendingInstall(null)}
 				/>

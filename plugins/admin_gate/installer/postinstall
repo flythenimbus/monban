@@ -1,0 +1,15 @@
+#!/bin/sh
+# admin-gate installer postinstall (stage 1 placeholder).
+#
+# Stage 1 just drops a marker file so we can verify the install_pkg
+# flow actually ran with admin privileges. Stage 2 replaces this
+# script with the real PAM + authorizationdb rebind.
+
+set -eu
+
+MARKER="/Library/Application Support/Monban/admin-gate-installed"
+mkdir -p "$(dirname "$MARKER")"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "$MARKER"
+chmod 0644 "$MARKER"
+
+exit 0

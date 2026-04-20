@@ -1,5 +1,6 @@
 {
   "name": "hello-world",
+  "display_name": "Hello World",
   "version": "0.1.0",
   "monban_api": "0.1",
   "description": "Smoke-test plugin. Logs a line on app_started and app_shutdown.",
