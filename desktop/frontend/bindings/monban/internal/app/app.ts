@@ -7,6 +7,9 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as json$0 from "../../../encoding/json/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as application$0 from "../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -73,6 +76,16 @@ export function FirePluginEvent(event: string, payload: any): $CancellablePromis
 }
 
 /**
+ * GetPluginSettings returns the persisted settings blob for the named
+ * plugin, or nil if none exist. The returned bytes are the opaque JSON
+ * body the plugin authored — the frontend auto-renders against the
+ * manifest's settings schema.
+ */
+export function GetPluginSettings(name: string): $CancellablePromise<json$0.RawMessage> {
+    return $Call.ByID(239319667, name);
+}
+
+/**
  * GetSettings returns settings from the secure config.
  */
 export function GetSettings(): $CancellablePromise<$models.CombinedSettings> {
@@ -94,6 +107,16 @@ export function GetVersion(): $CancellablePromise<string> {
     return $Call.ByID(1806113387);
 }
 
+/**
+ * InstallPlugin downloads the named plugin from the embedded catalog,
+ * verifies its signatures, extracts the tarball into the plugins dir,
+ * and loads it. Requires FIDO2 re-auth — installing a plugin adds
+ * HMAC-covered state to the secure config.
+ */
+export function InstallPlugin(name: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2470285849, name, pin);
+}
+
 export function IsLocked(): $CancellablePromise<boolean> {
     return $Call.ByID(1474303637);
 }
@@ -103,11 +126,21 @@ export function IsRegistered(): $CancellablePromise<boolean> {
 }
 
 /**
+ * ListAvailablePlugins returns every plugin in the embedded catalog that
+ * can run on this platform, with installed-status resolved.
+ */
+export function ListAvailablePlugins(): $CancellablePromise<$models.AvailablePlugin[]> {
+    return $Call.ByID(90493822).then(($result: any) => {
+        return $$createType5($result);
+    });
+}
+
+/**
  * ListKeys returns information about registered security keys.
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(257323087).then(($result: any) => {
-        return $$createType5($result);
+        return $$createType7($result);
     });
 }
 
@@ -116,7 +149,7 @@ export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
  */
 export function ListPlugins(): $CancellablePromise<plugin$0.PluginStatus[]> {
     return $Call.ByID(3885862709).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
     });
 }
 
@@ -204,10 +237,28 @@ export function StartPluginHost(): $CancellablePromise<void> {
 }
 
 /**
+ * UninstallPlugin terminates the plugin subprocess, removes its directory
+ * from ~/.config/monban/plugins/, and clears its settings from
+ * SecureConfig. Requires FIDO2 re-auth.
+ */
+export function UninstallPlugin(name: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2821468544, name, pin);
+}
+
+/**
  * Unlock performs FIDO2 assertion, unwraps the master secret, and decrypts all vaults.
  */
 export function Unlock(pin: string): $CancellablePromise<void> {
     return $Call.ByID(1703829999, pin);
+}
+
+/**
+ * UpdatePluginSettings persists a new settings blob for the named plugin
+ * and calls settings.apply on the running subprocess so it can validate
+ * + react. Requires FIDO2 re-auth — plugin settings are HMAC-covered.
+ */
+export function UpdatePluginSettings(name: string, settings: json$0.RawMessage, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2390545420, name, settings, pin);
 }
 
 /**
@@ -234,7 +285,9 @@ const $$createType0 = $models.DiskSpaceInfo.createFrom;
 const $$createType1 = $models.UpdateInfo.createFrom;
 const $$createType2 = $models.CombinedSettings.createFrom;
 const $$createType3 = $models.AppStatus.createFrom;
-const $$createType4 = $models.KeyInfo.createFrom;
+const $$createType4 = $models.AvailablePlugin.createFrom;
 const $$createType5 = $Create.Array($$createType4);
-const $$createType6 = plugin$0.PluginStatus.createFrom;
+const $$createType6 = $models.KeyInfo.createFrom;
 const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = plugin$0.PluginStatus.createFrom;
+const $$createType9 = $Create.Array($$createType8);

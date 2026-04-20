@@ -39,6 +39,43 @@ export class AppStatus {
 }
 
 /**
+ * AvailablePlugin is a catalog entry filtered for the running platform,
+ * augmented with a flag telling the UI whether it's already installed.
+ */
+export class AvailablePlugin {
+    "name": string;
+    "version": string;
+    "description": string;
+    "installed": boolean;
+
+    /** Creates a new AvailablePlugin instance. */
+    constructor($$source: Partial<AvailablePlugin> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("version" in $$source)) {
+            this["version"] = "";
+        }
+        if (!("description" in $$source)) {
+            this["description"] = "";
+        }
+        if (!("installed" in $$source)) {
+            this["installed"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AvailablePlugin instance from a string or object.
+     */
+    static createFrom($$source: any = {}): AvailablePlugin {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AvailablePlugin($$parsedSource as Partial<AvailablePlugin>);
+    }
+}
+
+/**
  * CombinedSettings is the frontend-facing settings object.
  * All fields are stored in the HMAC-signed secure config.
  */

@@ -62,7 +62,7 @@ export function Tabs({ tabs, defaultTab }: TabsProps) {
 			<div
 				role="tabpanel"
 				aria-label={activeTab?.label}
-				className="transition-all duration-150 ease-out motion-reduce:transition-none"
+				className="transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none"
 				style={{
 					opacity: slideDirection ? 0 : 1,
 					transform:

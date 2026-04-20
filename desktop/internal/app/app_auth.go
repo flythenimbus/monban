@@ -102,6 +102,11 @@ func (a *App) Register(pin string, label string) error {
 
 	monban.LockConfigDir()
 
+	a.pluginHost.Fire("on:key_registered", map[string]any{
+		"credentialID": monban.EncodeB64(cred.ID),
+		"label":        label,
+	})
+
 	return nil
 }
 
@@ -220,6 +225,13 @@ func (a *App) Unlock(pin string) error {
 
 	monban.LockConfigDir()
 
+	for _, v := range sc.Vaults {
+		a.pluginHost.Fire("on:vault_unlocked", map[string]any{
+			"vaultPath": v.Path,
+			"type":      v.Type,
+		})
+	}
+
 	return nil
 }
 
@@ -303,6 +315,8 @@ func (a *App) Lock() error {
 		}
 	}
 
+	vaults := a.secureCfg.Vaults
+
 	// Always zero secrets and re-lock directory, even on error
 	monban.ZeroBytes(a.masterSecret)
 	monban.ZeroBytes(a.encKey)
@@ -310,6 +324,13 @@ func (a *App) Lock() error {
 	a.encKey = nil
 	a.locked = true
 	monban.LockConfigDir()
+
+	for _, v := range vaults {
+		a.pluginHost.Fire("on:vault_locked", map[string]any{
+			"vaultPath": v.Path,
+			"type":      v.Type,
+		})
+	}
 
 	return lockErr
 }

@@ -1,8 +1,10 @@
 import * as App from "../bindings/monban/internal/app/app";
 import type {
 	AppStatus,
+	AvailablePlugin,
 	DiskSpaceInfo,
 	KeyInfo,
+	PluginStatus,
 	Settings,
 	UpdateInfo,
 } from "./types";
@@ -63,4 +65,41 @@ export const api = {
 
 	checkForUpdate: (): Promise<UpdateInfo> =>
 		App.CheckForUpdate() as unknown as Promise<UpdateInfo>,
+
+	listPlugins: (): Promise<PluginStatus[]> =>
+		App.ListPlugins() as unknown as Promise<PluginStatus[]>,
+
+	getPluginSettings: async (name: string): Promise<Record<string, unknown>> => {
+		const raw = (await App.GetPluginSettings(name)) as unknown;
+		if (raw === null || raw === undefined) return {};
+		if (typeof raw === "object") return raw as Record<string, unknown>;
+		if (typeof raw === "string") {
+			try {
+				return JSON.parse(raw) as Record<string, unknown>;
+			} catch {
+				return {};
+			}
+		}
+		return {};
+	},
+
+	updatePluginSettings: (
+		name: string,
+		settings: Record<string, unknown>,
+		pin: string,
+	): Promise<void> =>
+		App.UpdatePluginSettings(
+			name,
+			settings as unknown as Parameters<typeof App.UpdatePluginSettings>[1],
+			pin,
+		),
+
+	uninstallPlugin: (name: string, pin: string): Promise<void> =>
+		App.UninstallPlugin(name, pin),
+
+	listAvailablePlugins: (): Promise<AvailablePlugin[]> =>
+		App.ListAvailablePlugins() as unknown as Promise<AvailablePlugin[]>,
+
+	installPlugin: (name: string, pin: string): Promise<void> =>
+		App.InstallPlugin(name, pin),
 };

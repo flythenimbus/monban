@@ -59,6 +59,11 @@ type HostConfig struct {
 	// Logger is used for host-side log lines; nil falls back to the std
 	// logger.
 	Logger *log.Logger
+	// LoadPluginSettings, if set, returns the persisted settings blob for
+	// the named plugin. Called once per plugin during Start() and the
+	// result is passed as the hello handshake's config field. Return
+	// nil for plugins with no stored settings.
+	LoadPluginSettings func(name string) json.RawMessage
 }
 
 // Host manages the set of loaded plugin subprocesses.
@@ -81,12 +86,14 @@ func NewHost(cfg HostConfig) *Host {
 
 // PluginStatus is a read-only snapshot of a loaded plugin for UI/API use.
 type PluginStatus struct {
-	Name    string   `json:"name"`
-	Version string   `json:"version"`
-	Kind    []string `json:"kind"`
-	Hooks   []string `json:"hooks,omitempty"`
-	Dir     string   `json:"dir"`
-	Loaded  bool     `json:"loaded"`
+	Name        string          `json:"name"`
+	Version     string          `json:"version"`
+	Description string          `json:"description,omitempty"`
+	Kind        []string        `json:"kind"`
+	Hooks       []string        `json:"hooks,omitempty"`
+	Settings    json.RawMessage `json:"settings,omitempty"`
+	Dir         string          `json:"dir"`
+	Loaded      bool            `json:"loaded"`
 }
 
 // List returns a snapshot of every loaded plugin.
@@ -96,12 +103,14 @@ func (h *Host) List() []PluginStatus {
 	out := make([]PluginStatus, 0, len(h.plugins))
 	for _, p := range h.plugins {
 		out = append(out, PluginStatus{
-			Name:    p.Manifest.Name,
-			Version: p.Manifest.Version,
-			Kind:    p.Manifest.Kind,
-			Hooks:   p.Manifest.Hooks,
-			Dir:     p.Dir,
-			Loaded:  p.hello != nil && p.hello.Ready,
+			Name:        p.Manifest.Name,
+			Version:     p.Manifest.Version,
+			Description: p.Manifest.Description,
+			Kind:        p.Manifest.Kind,
+			Hooks:       p.Manifest.Hooks,
+			Settings:    p.Manifest.Settings,
+			Dir:         p.Dir,
+			Loaded:      p.hello != nil && p.hello.Ready,
 		})
 	}
 	return out
@@ -253,9 +262,14 @@ func (h *Host) spawn(ctx context.Context, m *Manifest, dir, binPath string) (*Pl
 }
 
 func (h *Host) hello(ctx context.Context, p *Plugin) (*HelloResult, error) {
+	var cfg json.RawMessage
+	if h.cfg.LoadPluginSettings != nil {
+		cfg = h.cfg.LoadPluginSettings(p.Manifest.Name)
+	}
 	params, _ := json.Marshal(helloParams{
 		HostVersion: h.cfg.HostVersion,
 		HostAPI:     HostAPIVersion,
+		Config:      cfg,
 	})
 	msg, err := p.request(ctx, "hello", params)
 	if err != nil {
@@ -326,6 +340,47 @@ func (h *Host) handleNotify(p *Plugin, msg *Message) {
 	default:
 		h.log.Printf("plugin[%s]: unhandled notify %q (P1)", p.Manifest.Name, msg.Method)
 	}
+}
+
+// Reconfigure sends a settings.apply request to the named plugin and
+// blocks until it replies or the context is cancelled. Plugins may
+// validate the settings and return an error in their response; callers
+// should surface that error to the user rather than silently retrying.
+func (h *Host) Reconfigure(ctx context.Context, name string, settings json.RawMessage) error {
+	h.mu.Lock()
+	p, ok := h.plugins[name]
+	h.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("plugin %q not loaded", name)
+	}
+	_, err := p.request(ctx, "settings.apply", settings)
+	return err
+}
+
+// Unload terminates and removes a single plugin. Used by uninstall: the
+// caller still has to clean up the on-disk plugin dir.
+func (h *Host) Unload(ctx context.Context, name string) error {
+	h.mu.Lock()
+	p, ok := h.plugins[name]
+	if ok {
+		delete(h.plugins, name)
+	}
+	h.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("plugin %q not loaded", name)
+	}
+	_ = p.notify("shutdown", nil)
+	if err := p.terminate(3 * time.Second); err != nil {
+		h.log.Printf("plugin[%s]: unload: %v", name, err)
+	}
+	return nil
+}
+
+// LoadOne verifies and spawns a single plugin by directory name under
+// PluginsDir. Used after an install so the new plugin is live without
+// restarting the app.
+func (h *Host) LoadOne(ctx context.Context, dirName string) error {
+	return h.loadOne(ctx, filepath.Join(h.cfg.PluginsDir, dirName))
 }
 
 // Shutdown signals every loaded plugin to exit, waits for a grace period,

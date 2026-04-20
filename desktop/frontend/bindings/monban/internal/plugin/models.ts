@@ -5,14 +5,20 @@
 // @ts-ignore: Unused imports
 import { Create as $Create } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as json$0 from "../../../encoding/json/models.js";
+
 /**
  * PluginStatus is a read-only snapshot of a loaded plugin for UI/API use.
  */
 export class PluginStatus {
     "name": string;
     "version": string;
+    "description"?: string;
     "kind": string[];
     "hooks"?: string[];
+    "settings"?: json$0.RawMessage;
     "dir": string;
     "loaded": boolean;
 
@@ -41,14 +47,14 @@ export class PluginStatus {
      * Creates a new PluginStatus instance from a string or object.
      */
     static createFrom($$source: any = {}): PluginStatus {
-        const $$createField2_0 = $$createType0;
         const $$createField3_0 = $$createType0;
+        const $$createField4_0 = $$createType0;
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         if ("kind" in $$parsedSource) {
-            $$parsedSource["kind"] = $$createField2_0($$parsedSource["kind"]);
+            $$parsedSource["kind"] = $$createField3_0($$parsedSource["kind"]);
         }
         if ("hooks" in $$parsedSource) {
-            $$parsedSource["hooks"] = $$createField3_0($$parsedSource["hooks"]);
+            $$parsedSource["hooks"] = $$createField4_0($$parsedSource["hooks"]);
         }
         return new PluginStatus($$parsedSource as Partial<PluginStatus>);
     }

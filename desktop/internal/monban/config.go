@@ -35,15 +35,16 @@ type CredentialEntry struct {
 // security settings, and the vault list. All fields are protected by a
 // FIDO2-derived HMAC — tampering is detected on unlock.
 type SecureConfig struct {
-	RpID                string                 `json:"rp_id"`
-	HmacSalt            string                 `json:"hmac_salt"` // base64url, 32 bytes, immutable after init
-	Credentials         []CredentialEntry      `json:"credentials"`
-	ForceAuthentication bool                   `json:"force_authentication"`
-	VaultDecryptModes   map[string]DecryptMode `json:"vault_decrypt_modes,omitempty"`
-	ConfigHMAC          string                 `json:"config_hmac,omitempty"` // base64url HMAC-SHA256 over protected fields
-	ConfigCounter       uint64                 `json:"config_counter"`       // monotonic counter, incremented on every signed write
-	Vaults              []VaultEntry           `json:"vaults"`
-	OpenOnStartup       bool                   `json:"open_on_startup"`
+	RpID                string                     `json:"rp_id"`
+	HmacSalt            string                     `json:"hmac_salt"` // base64url, 32 bytes, immutable after init
+	Credentials         []CredentialEntry          `json:"credentials"`
+	ForceAuthentication bool                       `json:"force_authentication"`
+	VaultDecryptModes   map[string]DecryptMode     `json:"vault_decrypt_modes,omitempty"`
+	ConfigHMAC          string                     `json:"config_hmac,omitempty"` // base64url HMAC-SHA256 over protected fields
+	ConfigCounter       uint64                     `json:"config_counter"`        // monotonic counter, incremented on every signed write
+	Vaults              []VaultEntry               `json:"vaults"`
+	OpenOnStartup       bool                       `json:"open_on_startup"`
+	PluginSettings      map[string]json.RawMessage `json:"plugin_settings,omitempty"` // per-plugin opaque JSON, covered by HMAC
 }
 
 // VaultEntry describes a protected folder or file.
@@ -365,5 +366,61 @@ func configHMACPayload(sc *SecureConfig) string {
 	fmt.Fprintf(&b, "open_on_startup:%v\n", sc.OpenOnStartup)
 	fmt.Fprintf(&b, "config_counter:%d\n", sc.ConfigCounter)
 
+	// Plugin settings: sorted by plugin name for determinism. Values are
+	// canonicalised by re-marshalling — protects against serialisation
+	// differences in the stored JSON.
+	if len(sc.PluginSettings) > 0 {
+		names := make([]string, 0, len(sc.PluginSettings))
+		for n := range sc.PluginSettings {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			fmt.Fprintf(&b, "plugin:%s:%s\n", n, canonicalJSON(sc.PluginSettings[n]))
+		}
+	}
+
 	return b.String()
+}
+
+// canonicalJSON normalises a raw JSON value so equivalent inputs produce
+// identical strings (keys sorted, whitespace stripped). Returns the raw
+// string on unmarshal failure so the HMAC can still be computed (Verify
+// will detect the malformed payload through the mismatch).
+func canonicalJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "null"
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return string(raw)
+	}
+	out, err := json.Marshal(sortMapKeys(v))
+	if err != nil {
+		return string(raw)
+	}
+	return string(out)
+}
+
+// sortMapKeys recursively converts map[string]any into a shape that marshals
+// with sorted keys. Go's encoding/json already sorts map keys on marshal, so
+// this is effectively a deep copy — still needed to handle nested maps that
+// came from json.RawMessage via Unmarshal into any.
+func sortMapKeys(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			out[k] = sortMapKeys(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = sortMapKeys(val)
+		}
+		return out
+	default:
+		return v
+	}
 }

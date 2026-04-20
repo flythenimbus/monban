@@ -8,6 +8,7 @@ export {
 
 export {
     AppStatus,
+    AvailablePlugin,
     CombinedSettings,
     DiskSpaceInfo,
     KeyInfo,

@@ -51,3 +51,38 @@ export interface UpdateInfo {
 	update_available: boolean;
 	release_url: string;
 }
+
+export type PluginSettingType =
+	| "bool"
+	| "string"
+	| "int"
+	| "url"
+	| "list<string>";
+
+export interface PluginSettingSpec {
+	type: PluginSettingType;
+	label?: string;
+	description?: string;
+	default?: unknown;
+	required?: boolean;
+}
+
+export type PluginSettingsSchema = Record<string, PluginSettingSpec>;
+
+export interface PluginStatus {
+	name: string;
+	version: string;
+	description?: string;
+	kind: string[];
+	hooks?: string[];
+	settings?: PluginSettingsSchema | null;
+	dir: string;
+	loaded: boolean;
+}
+
+export interface AvailablePlugin {
+	name: string;
+	version: string;
+	description: string;
+	installed: boolean;
+}
