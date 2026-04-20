@@ -1,11 +1,15 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"os"
+	"time"
 
 	"monban/internal/monban"
+	"monban/internal/plugin"
 )
 
 // Register creates a new FIDO2 credential and wraps the master secret with it.
@@ -208,6 +212,17 @@ func (a *App) Unlock(pin string) error {
 		}
 	}
 
+	// Auth-chain: let any plugin declaring provide:auth_gate approve or
+	// veto this unlock. Runs AFTER FIDO2 + HMAC + counter checks but
+	// BEFORE vaults are decrypted, so a deny leaves no disk state
+	// behind. Fail-closed: any plugin error/timeout counts as deny;
+	// escape via `monban --disable-plugins`.
+	if gateErr := a.runAuthGate(sc); gateErr != nil {
+		monban.ZeroBytes(masterSecret)
+		monban.ZeroBytes(encKey)
+		return gateErr
+	}
+
 	// Unlock all eager vaults
 	for _, v := range sc.Vaults {
 		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
@@ -233,6 +248,49 @@ func (a *App) Unlock(pin string) error {
 	}
 
 	return nil
+}
+
+// runAuthGate polls every auth_gate provider for an allow/deny verdict.
+// Returns nil on unanimous allow, or a user-facing error on deny. The
+// whole chain is bounded to 10 minutes; each plugin additionally has
+// its own per-invocation timeout from its manifest.
+func (a *App) runAuthGate(sc *monban.SecureConfig) error {
+	user, _ := monbanUser()
+	vaultPaths := make([]string, 0, len(sc.Vaults))
+	for _, v := range sc.Vaults {
+		vaultPaths = append(vaultPaths, v.Path)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	result := a.pluginHost.RunAuthGate(ctx, plugin.AuthGateInput{
+		User:    user,
+		Vaults:  vaultPaths,
+		Attempt: 1,
+	})
+	if result.Decision == "allow" {
+		return nil
+	}
+	msg := result.UIMessage
+	if msg == "" {
+		msg = result.Reason
+	}
+	if msg == "" {
+		msg = "authorization denied"
+	}
+	if result.Plugin != "" {
+		return fmt.Errorf("plugin %s denied unlock: %s", result.Plugin, msg)
+	}
+	return fmt.Errorf("auth gate denied unlock: %s", msg)
+}
+
+// monbanUser returns the invoking user's login name. Best-effort —
+// the auth_gate payload is informational, not security-critical.
+func monbanUser() (string, error) {
+	if u := os.Getenv("USER"); u != "" {
+		return u, nil
+	}
+	return "unknown", nil
 }
 
 // prepareAdditionalKey loads the existing secure config and master secret

@@ -4,6 +4,8 @@ import (
 	"context"
 	"embed"
 	"log"
+	"os"
+	"slices"
 
 	monbanapp "monban/internal/app"
 
@@ -90,7 +92,18 @@ func main() {
 		monbanapp.InstallLaunchAgent()
 	}
 	app.StartDeviceWatcher()
-	app.StartPluginHost(context.Background())
+
+	// --disable-plugins is the lockout-recovery escape for a broken
+	// auth_gate plugin. When set, plugins are never loaded — unlock
+	// proceeds as if nothing was installed — so a misconfigured
+	// sso-gate (or any denial chain) can't brick the user's ability
+	// to reach their own vaults. Must be noisy in the log so it's
+	// easy to spot in incident logs / detection pipelines.
+	if slices.Contains(os.Args[1:], "--disable-plugins") {
+		log.Println("monban: --disable-plugins passed; skipping plugin host startup")
+	} else {
+		app.StartPluginHost(context.Background())
+	}
 
 	wailsApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(event *application.ApplicationEvent) {
 		app.FirePluginEvent("on:app_started", nil)
