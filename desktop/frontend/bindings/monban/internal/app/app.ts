@@ -27,6 +27,15 @@ export function AddPath(path: string, pin: string): $CancellablePromise<void> {
 }
 
 /**
+ * CancelPluginPinTouch is called when the user dismisses a plugin PIN
+ * prompt. Signals the waiting goroutine so the plugin gets a cancel
+ * response promptly.
+ */
+export function CancelPluginPinTouch(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1354670432, id);
+}
+
+/**
  * CheckDiskSpace returns disk space info for a folder.
  */
 export function CheckDiskSpace(path: string): $CancellablePromise<$models.DiskSpaceInfo> {
@@ -197,6 +206,15 @@ export function RemoveKey(credentialID: string, pin: string): $CancellablePromis
  */
 export function ResizeWindow(width: number, height: number): $CancellablePromise<void> {
     return $Call.ByID(1466929615, width, height);
+}
+
+/**
+ * RespondPluginPinTouch is called by the frontend when the user submits
+ * a PIN for a plugin-initiated request. Performs a FIDO2 assertion with
+ * the given PIN and signals the waiting goroutine.
+ */
+export function RespondPluginPinTouch(id: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2131184713, id, pin);
 }
 
 /**

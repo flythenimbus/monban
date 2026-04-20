@@ -1,6 +1,7 @@
 import { Events } from "@wailsio/runtime";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
+import { PluginPinTouchOverlay } from "./components";
 import { AdminPanel } from "./screens/AdminPanel/AdminPanel";
 import { LockScreen } from "./screens/LockScreen/LockScreen";
 import { SetupScreen } from "./screens/SetupScreen/SetupScreen";
@@ -38,15 +39,17 @@ function App() {
 		};
 	}, [checkState]);
 
+	let screen: React.ReactNode;
 	switch (view) {
 		case "loading":
-			return (
+			screen = (
 				<div className="gradient-bg flex items-center justify-center min-h-screen text-text-secondary">
 					Loading...
 				</div>
 			);
+			break;
 		case "setup":
-			return (
+			screen = (
 				<SetupScreen
 					onComplete={() => {
 						api.exitFullscreen();
@@ -54,8 +57,9 @@ function App() {
 					}}
 				/>
 			);
+			break;
 		case "lock":
-			return (
+			screen = (
 				<LockScreen
 					onUnlock={() => {
 						api.exitFullscreen();
@@ -63,14 +67,23 @@ function App() {
 					}}
 				/>
 			);
+			break;
 		case "admin":
-			return (
+			screen = (
 				<AdminPanel
 					rollbackWarning={rollbackWarning}
 					onDismissRollback={() => setRollbackWarning(false)}
 				/>
 			);
+			break;
 	}
+
+	return (
+		<>
+			{screen}
+			<PluginPinTouchOverlay />
+		</>
+	);
 }
 
 export default App;

@@ -5,6 +5,7 @@ export { GlassCard } from "./GlassCard";
 export { Input } from "./Input";
 export { Logo } from "./Logo";
 export { PinAuth } from "./PinAuth";
+export { PluginPinTouchOverlay } from "./PluginPinTouchOverlay";
 export { SchemaField } from "./SchemaField";
 export { Select } from "./Select";
 export { StatusText } from "./StatusText";

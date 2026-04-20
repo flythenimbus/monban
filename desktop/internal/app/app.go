@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -60,10 +62,24 @@ type App struct {
 	encKey       []byte // derived file encryption key, zeroed on lock
 	window       *application.WebviewWindow
 	pluginHost   *plugin.Host
+
+	// Pending plugin-initiated PIN+touch prompts. Keyed by request id so
+	// the frontend can respond/cancel via RespondPluginPinTouch without
+	// needing a stateful RPC channel of its own.
+	pinTouchMu      sync.Mutex
+	pinTouchPending map[string]chan pinTouchReply
+}
+
+type pinTouchReply struct {
+	ok  bool
+	err error
 }
 
 func NewApp() *App {
-	a := &App{locked: true}
+	a := &App{
+		locked:          true,
+		pinTouchPending: map[string]chan pinTouchReply{},
+	}
 	a.pluginHost = plugin.NewHost(plugin.HostConfig{
 		PluginsDir:         filepath.Join(monban.ConfigDir(), "plugins"),
 		HostVersion:        Version,
@@ -71,16 +87,156 @@ func NewApp() *App {
 		OnRequestPinTouch: func(ctx context.Context, req plugin.PinTouchRequest) (*plugin.PinTouchResult, error) {
 			return a.handlePluginPinTouch(ctx, req)
 		},
+		OnAuthAssertWithPin: func(ctx context.Context, pin string) (bool, error) {
+			return a.handlePluginAssertWithPin(ctx, pin)
+		},
 	})
 	return a
 }
 
+// handlePluginAssertWithPin performs a FIDO2 assertion with a PIN that
+// a plugin helper already collected (e.g. from /dev/tty during a
+// terminal sudo). Blocks until the user touches their security key.
+// Returns true only on a successful assertion that unwraps to the
+// correct master secret.
+func (a *App) handlePluginAssertWithPin(_ context.Context, pin string) (bool, error) {
+	a.mu.Lock()
+	masterSecret, err := a.fidoReauth(pin)
+	a.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
+	monban.ZeroBytes(masterSecret)
+	return true, nil
+}
+
+// PluginPinTouchRequest is emitted to the frontend when a plugin asks
+// the host to prompt for PIN + touch. The frontend shows a PinAuth
+// dialog and responds via RespondPluginPinTouch(id, pin).
+type PluginPinTouchRequest struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+}
+
 // handlePluginPinTouch is invoked when a plugin's helper asks the host
-// to prompt the user for PIN + touch — typically the admin-gate
-// SecurityAgent flow. P3a only scaffolds the RPC pipe; the UI wiring
-// comes in P3b once the admin-gate plugin actually needs it.
-func (a *App) handlePluginPinTouch(_ context.Context, _ plugin.PinTouchRequest) (*plugin.PinTouchResult, error) {
-	return nil, fmt.Errorf("request_pin_touch not wired to UI yet")
+// to prompt the user for PIN + touch (e.g. the admin-gate sudo flow).
+// Emits an event to the frontend, blocks until the user responds or
+// the context cancels, returns the result to the plugin.
+func (a *App) handlePluginPinTouch(ctx context.Context, req plugin.PinTouchRequest) (*plugin.PinTouchResult, error) {
+	id := randomID()
+	reply := make(chan pinTouchReply, 1)
+
+	a.pinTouchMu.Lock()
+	a.pinTouchPending[id] = reply
+	a.pinTouchMu.Unlock()
+	defer func() {
+		a.pinTouchMu.Lock()
+		delete(a.pinTouchPending, id)
+		a.pinTouchMu.Unlock()
+	}()
+
+	if a.window == nil {
+		return nil, fmt.Errorf("no window available to prompt")
+	}
+	// Surface the window so the user can actually see the PinAuth
+	// dialog — Monban hides to tray on close, and a silently-emitted
+	// event from a backgrounded app looks exactly like the plugin is
+	// hanging.
+	showInDock()
+	invokeSync(func() {
+		a.window.Show()
+		a.window.Focus()
+	})
+	a.window.EmitEvent("plugin:pin-touch-request", PluginPinTouchRequest{
+		ID:       id,
+		Title:    req.Title,
+		Subtitle: req.Subtitle,
+	})
+
+	select {
+	case r := <-reply:
+		if r.err != nil {
+			return nil, r.err
+		}
+		return &plugin.PinTouchResult{OK: r.ok}, nil
+	case <-ctx.Done():
+		// Let the UI know we timed out so it can dismiss the dialog.
+		a.window.EmitEvent("plugin:pin-touch-cancelled", map[string]string{"id": id})
+		return nil, ctx.Err()
+	}
+}
+
+// RespondPluginPinTouch is called by the frontend when the user submits
+// a PIN for a plugin-initiated request. Performs a FIDO2 assertion with
+// the given PIN and signals the waiting goroutine.
+func (a *App) RespondPluginPinTouch(id string, pin string) error {
+	a.pinTouchMu.Lock()
+	reply, ok := a.pinTouchPending[id]
+	a.pinTouchMu.Unlock()
+	if !ok {
+		return fmt.Errorf("no pending request with id %q", id)
+	}
+
+	// fidoReauth wants a.mu; we also use it for the reply.
+	a.mu.Lock()
+	masterSecret, err := a.fidoReauth(pin)
+	a.mu.Unlock()
+	if err != nil {
+		reply <- pinTouchReply{ok: false, err: err}
+		return err
+	}
+	monban.ZeroBytes(masterSecret)
+
+	reply <- pinTouchReply{ok: true}
+	return nil
+}
+
+// CancelPluginPinTouch is called when the user dismisses a plugin PIN
+// prompt. Signals the waiting goroutine so the plugin gets a cancel
+// response promptly.
+func (a *App) CancelPluginPinTouch(id string) {
+	a.pinTouchMu.Lock()
+	reply, ok := a.pinTouchPending[id]
+	a.pinTouchMu.Unlock()
+	if !ok {
+		return
+	}
+	reply <- pinTouchReply{ok: false, err: fmt.Errorf("cancelled by user")}
+}
+
+// randomID returns a short random hex id unique enough for in-memory
+// correlation.
+func randomID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// verifyInstallReceipt decides whether an install_pkg run completed
+// successfully. Installer.app exiting cleanly doesn't mean the install
+// actually happened — the user might have clicked Cancel. Plugins that
+// ship an install_pkg are expected to drop a timestamp file at a
+// known path once their postinstall finishes. Admin-gate uses
+// /Library/Application Support/Monban/<name>-installed.
+func verifyInstallReceipt(_ context.Context, m *plugin.Manifest) error {
+	if m.InstallPkg == "" {
+		return nil
+	}
+	marker := filepath.Join(
+		"/Library/Application Support/Monban",
+		m.Name+"-installed",
+	)
+	info, err := os.Stat(marker)
+	if err != nil {
+		return fmt.Errorf("receipt %q not found (user cancelled or postinstall failed): %w",
+			marker, err)
+	}
+	if time.Since(info.ModTime()) > 10*time.Minute {
+		return fmt.Errorf("receipt %q is stale (modified %s ago) — install did not run this time",
+			marker, time.Since(info.ModTime()).Round(time.Second))
+	}
+	return nil
 }
 
 // loadPluginSettingsFromConfig reads the persisted settings blob for name
@@ -198,9 +354,13 @@ func (a *App) InstallPlugin(name, pin string) error {
 
 	pluginsDir := filepath.Join(monban.ConfigDir(), "plugins")
 	installer := plugin.NewInstaller(pluginsDir)
+	installer.VerifyInstallReceipt = verifyInstallReceipt
 
+	// GUI Installer.app walks the user through screens; allow plenty
+	// of time. The outer timeout also protects against a stuck
+	// Installer.app process.
 	monban.UnlockConfigDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	dirName, installErr := installer.Install(ctx, entry)
 	monban.LockConfigDir()

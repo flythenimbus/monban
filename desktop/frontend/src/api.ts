@@ -102,4 +102,10 @@ export const api = {
 
 	installPlugin: (name: string, pin: string): Promise<void> =>
 		App.InstallPlugin(name, pin),
+
+	respondPluginPinTouch: (id: string, pin: string): Promise<void> =>
+		App.RespondPluginPinTouch(id, pin),
+
+	cancelPluginPinTouch: (id: string): Promise<void> =>
+		App.CancelPluginPinTouch(id),
 };

@@ -3,13 +3,12 @@
   "display_name": "Admin Gate",
   "version": "0.1.0",
   "monban_api": "0.1",
-  "description": "Gate sudo and macOS admin dialogs behind your YubiKey.",
-  "platforms": ["darwin-arm64", "darwin-amd64"],
+  "description": "Gate sudo and macOS admin dialogs behind your security key.",
+  "platforms": ["darwin-arm64"],
   "kind": ["system"],
   "hooks": ["on:app_started", "on:app_shutdown"],
   "binary": {
-    "darwin-arm64": "bin/admin-gate",
-    "darwin-amd64": "bin/admin-gate"
+    "darwin-arm64": "bin/admin-gate"
   },
   "install_pkg": "admin-gate-installer-0.1.0.pkg",
   "settings": {
@@ -17,7 +16,7 @@
       "type": "bool",
       "default": false,
       "label": "No password fallback",
-      "description": "YubiKey is mandatory; don't fall through to macOS password on failure."
+      "description": "Security key is mandatory; don't fall through to macOS password on failure."
     }
   },
   "capabilities": [

@@ -22,10 +22,16 @@ import (
 type Installer struct {
 	PluginsDir string
 	HTTPClient *http.Client
-	// RunInstallPkg runs a macOS .pkg as root. Injectable so tests can
-	// assert we invoke it without actually running anything system-wide.
-	// Defaults to runInstallPkgViaOsascript.
+	// RunInstallPkg runs a macOS .pkg. Injectable so tests can assert
+	// we invoke it without actually running anything system-wide.
+	// Defaults to runInstallPkgViaGUIInstaller (open -W pkg).
 	RunInstallPkg func(ctx context.Context, pkgPath string) error
+	// VerifyInstallReceipt, if set, is called after RunInstallPkg
+	// returns successfully and should verify that the install actually
+	// completed (open -W's exit code only proves Installer.app
+	// launched, not that the user didn't click Cancel). Return a
+	// non-nil error to have Install() fail the whole operation.
+	VerifyInstallReceipt func(ctx context.Context, m *Manifest) error
 }
 
 // NewInstaller returns an Installer with sensible defaults. Pass an
@@ -34,7 +40,7 @@ func NewInstaller(pluginsDir string) *Installer {
 	return &Installer{
 		PluginsDir:    pluginsDir,
 		HTTPClient:    &http.Client{Timeout: 60 * time.Second},
-		RunInstallPkg: runInstallPkgViaOsascript,
+		RunInstallPkg: runInstallPkgViaGUIInstaller,
 	}
 }
 
@@ -138,39 +144,56 @@ func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (string, error
 		if i.RunInstallPkg == nil {
 			return "", fmt.Errorf("plugin requires install_pkg but host has no runner")
 		}
+		// Purge a stale receipt so VerifyInstallReceipt can't mistake a
+		// previous install's marker for this one.
+		_ = os.Remove(legacyInstallReceiptPath(m.Name))
 		if err := i.RunInstallPkg(ctx, pkgPath); err != nil {
 			return "", fmt.Errorf("run install_pkg: %w", err)
+		}
+		// open -W returns 0 whenever Installer.app quit cleanly —
+		// including if the user clicked Cancel. Require a receipt
+		// verifier to confirm the install actually completed.
+		if i.VerifyInstallReceipt != nil {
+			if err := i.VerifyInstallReceipt(ctx, m); err != nil {
+				return "", fmt.Errorf("install did not complete: %w", err)
+			}
 		}
 	}
 
 	return m.Name, nil
 }
 
-// runInstallPkgViaOsascript invokes /usr/sbin/installer via AppleScript's
-// `do shell script ... with administrator privileges`, which triggers
-// the standard macOS admin-password prompt. This is the Apple-free
-// install path: the tarball is already ed25519-verified, so Gatekeeper
-// isn't the trust boundary — the signed tarball is.
-func runInstallPkgViaOsascript(ctx context.Context, pkgPath string) error {
+// runInstallPkgViaGUIInstaller opens the pkg with macOS's Installer.app
+// GUI and waits for it to exit (open -W). This is the only reliable way
+// to modify SIP-protected locations like /etc/pam.d/ on macOS Tahoe —
+// the GUI Installer.app has entitlements the CLI `installer` binary
+// and any osascript-elevated shell lack. The trade-off is the user
+// sees Apple's standard install GUI and clicks through it manually.
+//
+// `open -W` blocks until Installer.app quits. Its exit code tells us
+// the app launched, not whether the install succeeded; the caller
+// verifies that by checking for a postinstall-dropped marker file
+// (see Installer.InstallMarkerPath).
+func runInstallPkgViaGUIInstaller(ctx context.Context, pkgPath string) error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("install_pkg is macOS-only (got %s)", runtime.GOOS)
 	}
-	// AppleScript's `quoted form of` handles shell quoting for us, but
-	// we still have to AppleScript-escape the path before splicing into
-	// the script source.
-	safe := strings.ReplaceAll(pkgPath, `\`, `\\`)
-	safe = strings.ReplaceAll(safe, `"`, `\"`)
-	script := fmt.Sprintf(
-		`do shell script "/usr/sbin/installer -pkg " & quoted form of "%s" & " -target /" with administrator privileges`,
-		safe,
-	)
-	cmd := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", script)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("installer: %v: %s", err, strings.TrimSpace(string(out)))
+	cmd := exec.CommandContext(ctx, "/usr/bin/open", "-W", pkgPath)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("launch Installer.app: %w", err)
 	}
 	return nil
 }
+
+// legacyInstallReceiptPath is the by-convention path the admin-gate
+// postinstall (and any future install_pkg plugin following the same
+// convention) drops a timestamped marker into. Best-effort cleanup
+// happens before invoking the installer so a previous run's marker
+// can't cause a false "install succeeded" reading.
+func legacyInstallReceiptPath(pluginName string) string {
+	return "/Library/Application Support/Monban/" + pluginName + "-installed"
+}
+
 
 // fetch performs an HTTP GET with a size cap and returns the body bytes.
 func (i *Installer) fetch(ctx context.Context, url string) ([]byte, error) {

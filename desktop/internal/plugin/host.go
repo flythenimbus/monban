@@ -72,6 +72,12 @@ type HostConfig struct {
 	// RPC until this returns. Return an error to fail the plugin's
 	// request.
 	OnRequestPinTouch func(ctx context.Context, req PinTouchRequest) (*PinTouchResult, error)
+	// OnAuthAssertWithPin, if set, is invoked when a plugin sends the
+	// auth.assert_with_pin RPC — the terminal-sudo path where the
+	// plugin has already collected a PIN from /dev/tty. Host performs
+	// the FIDO2 assertion (which blocks until the user touches their
+	// security key) and returns success/failure.
+	OnAuthAssertWithPin func(ctx context.Context, pin string) (bool, error)
 }
 
 // PinTouchRequest is the parameters of a plugin-initiated PIN+touch
@@ -401,9 +407,41 @@ func (h *Host) handlePluginRequest(p *Plugin, msg *Message) {
 	switch msg.Method {
 	case "request_pin_touch":
 		h.handleRequestPinTouch(p, msg)
+	case "auth.assert_with_pin":
+		h.handleAuthAssertWithPin(p, msg)
 	default:
 		h.replyError(p, msg.ID, -32601, fmt.Sprintf("method %q not supported", msg.Method))
 	}
+}
+
+func (h *Host) handleAuthAssertWithPin(p *Plugin, msg *Message) {
+	if h.cfg.OnAuthAssertWithPin == nil {
+		h.replyError(p, msg.ID, -32601, "auth.assert_with_pin not supported by host")
+		return
+	}
+	var params struct {
+		Pin string `json:"pin"`
+	}
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		h.replyError(p, msg.ID, -32602, "invalid params: "+err.Error())
+		return
+	}
+	if params.Pin == "" {
+		h.replyError(p, msg.ID, -32602, "pin required")
+		return
+	}
+	// FIDO2 assertion blocks waiting for the user to touch the key;
+	// give it up to 2 minutes.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	ok, err := h.cfg.OnAuthAssertWithPin(ctx, params.Pin)
+	if err != nil {
+		h.replyError(p, msg.ID, -32000, err.Error())
+		return
+	}
+	resultBytes, _ := json.Marshal(map[string]bool{"ok": ok})
+	_ = p.codec.Write(&Message{ID: msg.ID, Type: TypeResponse, Result: resultBytes})
 }
 
 func (h *Host) handleRequestPinTouch(p *Plugin, msg *Message) {

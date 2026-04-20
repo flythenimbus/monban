@@ -1,15 +1,69 @@
 #!/bin/sh
-# admin-gate installer postinstall (stage 1 placeholder).
+# admin-gate installer postinstall.
 #
-# Stage 1 just drops a marker file so we can verify the install_pkg
-# flow actually ran with admin privileges. Stage 2 replaces this
-# script with the real PAM + authorizationdb rebind.
+# Runs as root via /usr/sbin/installer (itself wrapped by osascript's
+# "with administrator privileges" from the Monban app).
+#
+# SIP on macOS Tahoe+ refuses to let any shell script CREATE files in
+# /etc/pam.d/, even from a pkg postinstall. The only blessed way to
+# bring sudo_local into existence is:
+#
+#     cp /etc/pam.d/sudo_local.template /etc/pam.d/sudo_local
+#
+# Once the file exists, in-place edits (truncate + rewrite on the same
+# inode via `>`) are permitted. So:
+#
+#   1. Drop helper + PAM module into /usr/local/ (payload — works).
+#   2. `cp` the template to materialise sudo_local if missing.
+#   3. Rewrite sudo_local in-place, stripping any stale monban line
+#      and appending the current one.
 
-set -eu
+LOG=/tmp/monban-admin-gate-postinstall.log
+exec > "$LOG" 2>&1
+set -eux
 
-MARKER="/Library/Application Support/Monban/admin-gate-installed"
-mkdir -p "$(dirname "$MARKER")"
-date -u +"%Y-%m-%dT%H:%M:%SZ" > "$MARKER"
-chmod 0644 "$MARKER"
+SUDO_LOCAL=/etc/pam.d/sudo_local
+TEMPLATE=${SUDO_LOCAL}.template
+PAM_LINE='auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate'
+TAG='# monban sudo gate'
+
+# Payload placed /usr/local/bin/monban-pam-helper + /usr/local/lib/pam/pam_monban.so.
+# Tighten perms.
+chown root:wheel /usr/local/bin/monban-pam-helper
+chmod 0755 /usr/local/bin/monban-pam-helper
+chown root:wheel /usr/local/lib/pam/pam_monban.so
+chmod 0644 /usr/local/lib/pam/pam_monban.so
+
+# Materialise sudo_local if it doesn't exist. Prefer the template so
+# macOS Tahoe's SIP special-case accepts the creation; fall back to a
+# direct touch on older macOS where SIP doesn't enforce this.
+if [ ! -f "$SUDO_LOCAL" ]; then
+    if [ -f "$TEMPLATE" ]; then
+        cp "$TEMPLATE" "$SUDO_LOCAL"
+    else
+        : > "$SUDO_LOCAL" || {
+            echo "ERROR: cannot create $SUDO_LOCAL (no template, SIP blocks direct create)" >&2
+            exit 1
+        }
+    fi
+fi
+
+# In-place edit: filter out any stale monban line, then append the
+# current one. Using `cat | grep | tee` keeps the rewrite on the
+# existing inode (no tmp file in /etc/pam.d/) so SIP's "no new files"
+# rule doesn't trigger.
+filtered=$(grep -v -F -- "$TAG" "$SUDO_LOCAL" || true)
+{
+    if [ -n "$filtered" ]; then
+        printf '%s\n' "$filtered"
+    fi
+    printf '%s\n' "$PAM_LINE"
+} > "$SUDO_LOCAL"
+
+chown root:wheel "$SUDO_LOCAL"
+chmod 0444 "$SUDO_LOCAL"
+
+mkdir -p "/Library/Application Support/Monban"
+date -u +"%Y-%m-%dT%H:%M:%SZ" > "/Library/Application Support/Monban/admin-gate-installed"
 
 exit 0
