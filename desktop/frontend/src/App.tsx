@@ -1,38 +1,18 @@
 import { Events } from "@wailsio/runtime";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import { IPCAuthDialog } from "./components/IPCAuthDialog";
 import { AdminPanel } from "./screens/AdminPanel/AdminPanel";
 import { LockScreen } from "./screens/LockScreen/LockScreen";
 import { SetupScreen } from "./screens/SetupScreen/SetupScreen";
 
-type View = "loading" | "setup" | "lock" | "admin" | "ipc-auth";
-
-interface IPCAuthRequest {
-	user: string;
-	service: string;
-}
+type View = "loading" | "setup" | "lock" | "admin";
 
 function App() {
 	const [view, setView] = useState<View>("loading");
-	const [previousView, setPreviousView] = useState<View>("loading");
 	const [rollbackWarning, setRollbackWarning] = useState(false);
-	const [ipcAuth, setIpcAuth] = useState<IPCAuthRequest | null>(null);
 
 	const checkState = useCallback(async () => {
 		try {
-			// A pending IPC auth request (typically from the authorization
-			// plugin triggered by a system-level admin prompt) takes priority
-			// over every other view. Handles the cold-start race where the
-			// plugin connected and emitted the event before Events.On was
-			// subscribed.
-			const pending = await api.getPendingIPCAuth();
-			if (pending) {
-				setIpcAuth(pending);
-				setView("ipc-auth");
-				return;
-			}
-
 			const status = await api.getStatus();
 			if (!status.registered) {
 				setView("setup");
@@ -52,30 +32,11 @@ function App() {
 		const offRollback = Events.On("app:config-rollback-detected", () =>
 			setRollbackWarning(true),
 		);
-		const offIpcAuth = Events.On(
-			"ipc:auth-request",
-			(event: { data: IPCAuthRequest }) => {
-				console.log("[ipc] received ipc:auth-request", event.data);
-				setIpcAuth(event.data);
-				setView((prev) => {
-					console.log("[ipc] switching view from", prev, "to ipc-auth");
-					setPreviousView(prev);
-					return "ipc-auth";
-				});
-			},
-		);
 		return () => {
 			offLocked();
 			offRollback();
-			offIpcAuth();
 		};
 	}, [checkState]);
-
-	const handleIpcDone = () => {
-		setIpcAuth(null);
-		setView(previousView);
-		api.hideToTray();
-	};
 
 	switch (view) {
 		case "loading":
@@ -109,14 +70,6 @@ function App() {
 					onDismissRollback={() => setRollbackWarning(false)}
 				/>
 			);
-		case "ipc-auth":
-			return ipcAuth ? (
-				<IPCAuthDialog
-					service={ipcAuth.service}
-					user={ipcAuth.user}
-					onDone={handleIpcDone}
-				/>
-			) : null;
 	}
 }
 

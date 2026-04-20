@@ -8,7 +8,6 @@ require (
 	github.com/keys-pub/go-libfido2 v1.5.3
 	github.com/wailsapp/wails/v3 v3.0.0-alpha.74
 	golang.org/x/crypto v0.49.0
-	golang.org/x/term v0.41.0
 )
 
 require (

@@ -24,9 +24,6 @@ func TestNewApp(t *testing.T) {
 	if a.secureCfg != nil {
 		t.Error("new app should have nil secureCfg")
 	}
-	if a.ipc != nil {
-		t.Error("new app should have nil ipc")
-	}
 }
 
 func TestIsLocked_Default(t *testing.T) {
@@ -114,12 +111,6 @@ func TestEnterFullscreen_NilWindow(t *testing.T) {
 	stubHooks(t)
 	a := NewApp()
 	a.EnterFullscreen() // nil window → early return
-}
-
-func TestHideToTray_NilWindow_Hooks(t *testing.T) {
-	stubHooks(t)
-	a := NewApp()
-	a.HideToTray() // nil window → early return, no panic
 }
 
 func TestAppStatus_JSONFields(t *testing.T) {

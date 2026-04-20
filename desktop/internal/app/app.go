@@ -48,7 +48,6 @@ type App struct {
 	masterSecret []byte // in-memory only, zeroed on lock
 	encKey       []byte // derived file encryption key, zeroed on lock
 	window       *application.WebviewWindow
-	ipc          *ipcState
 }
 
 func NewApp() *App {

@@ -57,18 +57,6 @@ export const api = {
 			pin,
 		),
 
-	handleIPCAuth: (pin: string): Promise<void> => App.HandleIPCAuth(pin),
-
-	cancelIPCAuth: (): Promise<void> => App.CancelIPCAuth(),
-
-	getPendingIPCAuth: (): Promise<{ user: string; service: string } | null> =>
-		App.GetPendingIPCAuth() as unknown as Promise<{
-			user: string;
-			service: string;
-		} | null>,
-
-	hideToTray: (): Promise<void> => App.HideToTray(),
-
 	revealSecureConfig: (): Promise<void> => App.RevealSecureConfig(),
 
 	getVersion: (): Promise<string> => App.GetVersion(),
