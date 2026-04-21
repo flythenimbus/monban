@@ -374,9 +374,14 @@ func (a *App) ListAvailablePlugins() []AvailablePlugin {
 // verifies its signatures, extracts the tarball into the plugins dir,
 // and loads it. Requires FIDO2 re-auth — installing a plugin adds
 // HMAC-covered state to the secure config.
-func (a *App) InstallPlugin(name, pin string) error {
+func (a *App) InstallPlugin(name, pin string) (retErr error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	defer func() {
+		if retErr != nil {
+			log.Printf("monban: install plugin %q failed: %v", name, retErr)
+		}
+	}()
 
 	if a.locked {
 		return fmt.Errorf("must be unlocked to install plugins")

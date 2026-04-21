@@ -65,6 +65,18 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
+  dev:prodkey:
+    summary: Runs the app from source with the production plugin pubkey injected
+    desc: |
+      Same as `task dev` but bakes prod-release.pub into the binary so it
+      trusts plugin artefacts signed in CI with MONBAN_PLUGIN_SIGNING_KEY.
+      Used to reproduce the real install flow against live GitHub releases.
+    preconditions:
+      - sh: '[ -f prod-release.pub ]'
+        msg: "desktop/prod-release.pub missing — generate with `./bin/monban-sign generate-key`"
+    cmds:
+      - go run -ldflags "-X monban/internal/plugin.ReleasePubKeyHex=$(cat prod-release.pub)" .
+
   setup:docker:
     summary: Builds Docker image for cross-compilation (~800MB download)
     cmds:
