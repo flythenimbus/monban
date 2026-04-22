@@ -76,3 +76,34 @@ func filterAuthorized(creds []monban.CredentialEntry) ([]monban.CredentialEntry,
 	}
 	return filtered, nil
 }
+
+// isCredInAllowed reports whether cred's pubkey pair appears in the
+// allowed slice. Used as the belt+suspenders check after unwrap.
+func isCredInAllowed(cred *monban.CredentialEntry, allowed []monban.CredentialEntry) bool {
+	if cred == nil {
+		return false
+	}
+	for _, a := range allowed {
+		if a.PublicKeyX == cred.PublicKeyX && a.PublicKeyY == cred.PublicKeyY {
+			return true
+		}
+	}
+	return false
+}
+
+// collectCredentialIDs mirrors SecureConfig.CollectCredentialIDs but
+// operates on an arbitrary slice — needed so we can compute the IDs
+// offered to the YubiKey from the allowlist-filtered subset without
+// mutating the SecureConfig (which VerifySecureConfig must later hash
+// over in its original form — see N1).
+func collectCredentialIDs(creds []monban.CredentialEntry) ([][]byte, error) {
+	out := make([][]byte, len(creds))
+	for i, c := range creds {
+		id, err := monban.DecodeB64(c.CredentialID)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = id
+	}
+	return out, nil
+}

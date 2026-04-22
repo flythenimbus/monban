@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -163,18 +165,27 @@ func installAuthGateMock(
 	}
 
 	plat := CurrentPlatform()
+	// Compute the binary hash so the manifest carries binary_sha256 —
+	// mirrors what build.sh does for real plugins. Without it the host
+	// treats this as a missing-hash production build and refuses (N2).
+	binBytes, err := os.ReadFile(filepath.Join(pluginDir, "bin", "mock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binHash := sha256.Sum256(binBytes)
 	m := map[string]any{
-		"name":       name,
-		"version":    "0.1.0",
-		"monban_api": HostAPIVersion,
-		"platforms":  []string{plat},
-		"kind":       []string{"auth_gate"},
+		"name":          name,
+		"version":       "0.1.0",
+		"monban_api":    HostAPIVersion,
+		"platforms":     []string{plat},
+		"kind":          []string{"auth_gate"},
 		"provides": []map[string]any{{
 			"name":            "auth.gate",
 			"priority":        priority,
 			"timeout_seconds": timeoutSeconds,
 		}},
-		"binary": map[string]string{plat: "bin/mock"},
+		"binary":        map[string]string{plat: "bin/mock"},
+		"binary_sha256": map[string]string{plat: hex.EncodeToString(binHash[:])},
 	}
 	raw, _ := json.MarshalIndent(m, "", "  ")
 	mp := filepath.Join(pluginDir, "manifest.json")

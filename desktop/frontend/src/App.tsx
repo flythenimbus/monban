@@ -17,6 +17,12 @@ function App() {
 	const [authorizeReq, setAuthorizeReq] = useState<AuthorizeRequest | null>(
 		null,
 	);
+	// N14: second-FIDO2-touch overlay during plugin install_pkg. Named
+	// so the user knows the touch they're about to give authorizes
+	// running a system installer as root, not just the download step.
+	const [secondTouchPlugin, setSecondTouchPlugin] = useState<string | null>(
+		null,
+	);
 	// Remember what the user was looking at when a plugin auth takes over,
 	// so we can restore it after the prompt resolves.
 	const prevViewRef = useRef<View>("admin");
@@ -84,51 +90,95 @@ function App() {
 				setView((cur) => (cur === "authorize" ? prevViewRef.current : cur));
 			},
 		);
+		const offSecondTouch = Events.On(
+			"install:second-touch-required",
+			(event: { data: { pluginName: string; displayName: string } }) =>
+				setSecondTouchPlugin(event.data.displayName || event.data.pluginName),
+		);
+		const offSecondTouchDone = Events.On("install:second-touch-complete", () =>
+			setSecondTouchPlugin(null),
+		);
 		return () => {
 			offLocked();
 			offRollback();
 			offPinTouch();
 			offPinTouchCancelled();
+			offSecondTouch();
+			offSecondTouchDone();
 		};
 	}, [checkState, enterAuthorize]);
 
-	switch (view) {
-		case "loading":
-			return (
-				<div className="gradient-bg flex items-center justify-center min-h-screen text-text-secondary">
-					Loading...
+	const body = (() => {
+		switch (view) {
+			case "loading":
+				return (
+					<div className="gradient-bg flex items-center justify-center min-h-screen text-text-secondary">
+						Loading...
+					</div>
+				);
+			case "setup":
+				return (
+					<SetupScreen
+						onComplete={() => {
+							api.exitFullscreen();
+							setView("admin");
+						}}
+					/>
+				);
+			case "lock":
+				return (
+					<LockScreen
+						onUnlock={() => {
+							api.exitFullscreen();
+							setView("admin");
+						}}
+					/>
+				);
+			case "admin":
+				return (
+					<AdminPanel
+						rollbackWarning={rollbackWarning}
+						onDismissRollback={() => setRollbackWarning(false)}
+					/>
+				);
+			case "authorize":
+				return authorizeReq ? (
+					<AuthorizeScreen request={authorizeReq} onDone={exitAuthorize} />
+				) : null;
+		}
+	})();
+
+	return (
+		<>
+			{body}
+			{secondTouchPlugin && (
+				<SecondTouchOverlay pluginName={secondTouchPlugin} />
+			)}
+		</>
+	);
+}
+
+/**
+ * SecondTouchOverlay surfaces the second FIDO2 touch required before
+ * a plugin's install_pkg runs as root. Without this the backend's
+ * second fidoReauth is a silent touch the user doesn't realise
+ * authorises the installer, not just the download. Part of N14.
+ */
+function SecondTouchOverlay({ pluginName }: { pluginName: string }) {
+	return (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+			<div className="max-w-md rounded-xl bg-card p-6 text-center shadow-xl">
+				<div className="mb-4 text-lg font-semibold">Authorize installer</div>
+				<div className="mb-2 text-sm text-text-secondary">
+					<strong>{pluginName}</strong> is about to run a system installer that
+					modifies files outside Monban.
 				</div>
-			);
-		case "setup":
-			return (
-				<SetupScreen
-					onComplete={() => {
-						api.exitFullscreen();
-						setView("admin");
-					}}
-				/>
-			);
-		case "lock":
-			return (
-				<LockScreen
-					onUnlock={() => {
-						api.exitFullscreen();
-						setView("admin");
-					}}
-				/>
-			);
-		case "admin":
-			return (
-				<AdminPanel
-					rollbackWarning={rollbackWarning}
-					onDismissRollback={() => setRollbackWarning(false)}
-				/>
-			);
-		case "authorize":
-			return authorizeReq ? (
-				<AuthorizeScreen request={authorizeReq} onDone={exitAuthorize} />
-			) : null;
-	}
+				<div className="text-sm text-text-secondary">
+					Touch your security key to confirm.
+				</div>
+			</div>
+		</div>
+	);
 }
 
 export default App;

@@ -20,6 +20,9 @@ if [ -f "$SUDO_LOCAL" ]; then
 fi
 
 echo "removing installed files"
+# New install locations (post N20 move to /Library/Monban/).
+rm -rf /Library/Monban
+# Legacy locations, in case upgrading from a build that used /usr/local/.
 rm -f /usr/local/bin/monban-pam-helper
 rm -f /usr/local/lib/pam/pam_monban.so
 rm -rf "/Library/Application Support/Monban/admin-gate-installed"

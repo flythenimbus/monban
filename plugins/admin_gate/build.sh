@@ -63,8 +63,12 @@ for target in "${platforms[@]}"; do
     payload="dist/payload-$plat"
     pkg_scripts="dist/pkg-scripts-$plat"
     rm -rf "$payload" "$pkg_scripts"
-    mkdir -p "$payload/usr/local/bin"
-    mkdir -p "$payload/usr/local/lib/pam"
+    # N20: /Library/Monban/ replaces /usr/local/{bin,lib/pam} as the
+    # install root for the PAM helper + module. /Library/ is root-owned
+    # by default on macOS and cannot be user-chowned without admin
+    # action; /usr/local/ is user-owned on Intel Macs with Homebrew.
+    mkdir -p "$payload/Library/Monban"
+    mkdir -p "$payload/Library/Monban/pam"
     mkdir -p "$payload/Library/Security/SecurityAgentPlugins"
     mkdir -p "$pkg_scripts"
 
@@ -87,14 +91,14 @@ for target in "${platforms[@]}"; do
         CGO_LDFLAGS="-L${local_brew}/lib -lfido2 -mmacosx-version-min=10.15" \
         go build \
             -trimpath -ldflags="-w -s" \
-            -o "$(pwd)/../plugins/admin_gate/$payload/usr/local/bin/monban-pam-helper" \
+            -o "$(pwd)/../plugins/admin_gate/$payload/Library/Monban/monban-pam-helper" \
             ./cmd/pam-helper/
     )
 
     # --- 2. Compile the PAM module (.so) straight into the payload.
     echo "  compiling pam_monban.so ($plat)..."
     cc -arch "$cc_arch" -shared -fPIC \
-        -o "$payload/usr/local/lib/pam/pam_monban.so" \
+        -o "$payload/Library/Monban/pam/pam_monban.so" \
         native/pam_monban.c \
         -lpam
 

@@ -183,7 +183,14 @@ static dispatch_queue_t sCacheQueue;
 static NSDate *sCachedAt;
 static char sCachedUsername[256];
 static uid_t sCachedUID;
+/*
+ * N4: denial cache must key on (uid, username) the same way the
+ * success cache does, otherwise user A cancelling a prompt briefly
+ * blocks user B's admin actions on a multi-session Mac.
+ */
 static NSDate *sDeniedAt;
+static uid_t sDeniedUID;
+static char sDeniedUsername[256];
 
 static void cacheInit(void) {
     static dispatch_once_t once;
@@ -223,21 +230,25 @@ static void cacheStore(const char *username, uid_t uid) {
     });
 }
 
-static BOOL denyCacheHit(void) {
+static BOOL denyCacheHit(uid_t wantUID, const char *wantUsername) {
     cacheInit();
     __block BOOL hit = NO;
     dispatch_sync(sCacheQueue, ^{
         if (sDeniedAt == nil) return;
         if ([[NSDate date] timeIntervalSinceDate:sDeniedAt] > DENY_CACHE_TTL_SECONDS) return;
+        if (sDeniedUID != wantUID) return;
+        if (strncmp(sDeniedUsername, wantUsername, sizeof(sDeniedUsername)) != 0) return;
         hit = YES;
     });
     return hit;
 }
 
-static void denyCacheStore(void) {
+static void denyCacheStore(uid_t uid, const char *username) {
     cacheInit();
     dispatch_sync(sCacheQueue, ^{
         sDeniedAt = [NSDate date];
+        sDeniedUID = uid;
+        strlcpy(sDeniedUsername, username, sizeof(sDeniedUsername));
     });
 }
 
@@ -283,22 +294,22 @@ static OSStatus MonbanMechanismInvoke(AuthorizationMechanismRef inMechanism) {
     MonbanMechanism *mech = (MonbanMechanism *)inMechanism;
     const AuthorizationCallbacks *cb = mech->plugin->callbacks;
 
-    /* Fresh denial wins — prevents multi-right re-prompting after cancel. */
-    if (denyCacheHit()) {
-        cb->SetResult(mech->engine, kAuthorizationResultDeny);
-        return errAuthorizationSuccess;
-    }
-
     /*
-     * C3: resolve console user BEFORE cache lookup so the cache can be
-     * keyed to this session. If the console user flipped (fast user
-     * switching, multi-session), we must not inherit user A's cached
-     * success when user B triggers the mechanism.
+     * C3 + N4: resolve console user BEFORE any cache lookup so both
+     * success AND denial caches can be keyed to this session. If the
+     * console user flipped (fast user switching, multi-session), we
+     * must not let user A's state bleed into user B's auth.
      */
     char username[256] = {0};
     uid_t uid = 0;
     char home[1024] = {0};
     if (!resolveConsoleUser(username, sizeof(username), &uid, home, sizeof(home))) {
+        cb->SetResult(mech->engine, kAuthorizationResultDeny);
+        return errAuthorizationSuccess;
+    }
+
+    /* Fresh denial for THIS session wins — prevents multi-right re-prompting after cancel. */
+    if (denyCacheHit(uid, username)) {
         cb->SetResult(mech->engine, kAuthorizationResultDeny);
         return errAuthorizationSuccess;
     }
@@ -325,7 +336,7 @@ static OSStatus MonbanMechanismInvoke(AuthorizationMechanismRef inMechanism) {
         cacheStore(username, uid);
         cb->SetResult(mech->engine, kAuthorizationResultAllow);
     } else {
-        denyCacheStore();
+        denyCacheStore(uid, username);
         cb->SetResult(mech->engine, kAuthorizationResultDeny);
     }
 

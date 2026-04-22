@@ -57,7 +57,7 @@ const maxDownloadBytes = 50 * 1024 * 1024 // 50 MiB
 // Install downloads, verifies, and extracts the plugin described by e.
 // Returns the directory name under PluginsDir that was written (equal
 // to the manifest's declared name).
-func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (string, error) {
+func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (retName string, retErr error) {
 	platform := CurrentPlatform()
 	if !e.SupportsPlatform(platform) {
 		return "", fmt.Errorf("plugin %s does not support %s", e.Name, platform)
@@ -139,6 +139,20 @@ func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (string, error
 		return "", fmt.Errorf("commit install: %w", err)
 	}
 	cleanup = false
+
+	// N21: if anything past this point errors (install_pkg consent
+	// cancelled, Installer.app fails, VerifyInstallReceipt rejects),
+	// roll back the committed directory AND any receipt the user
+	// might have. Otherwise next Monban start loads a half-installed
+	// plugin: the stdio subprocess works, but the privileged side
+	// effects (PAM, authorizationdb) never happened, so the plugin
+	// is functionally useless and the UI reports it as healthy.
+	defer func() {
+		if retErr != nil {
+			_ = os.RemoveAll(final)
+			_ = os.Remove(legacyInstallReceiptPath(m.Name))
+		}
+	}()
 
 	// Post-extract hook: run the manifest-declared installer .pkg if any.
 	// The admin-gate plugin uses this to write /etc/pam.d/ entries and

@@ -240,6 +240,14 @@ func (a *App) Unlock(pin string) error {
 
 	monban.LockConfigDir()
 
+	// N11: a successful user-initiated unlock clears the plugin
+	// assert-with-pin lockout. This is the *only* reset path — a
+	// compromised plugin cannot unfreeze itself by forcing a
+	// successful assertion against stolen credentials.
+	if a.pluginHost != nil {
+		a.pluginHost.NotifyUserUnlockSucceeded()
+	}
+
 	for _, v := range sc.Vaults {
 		a.pluginHost.Fire("on:vault_unlocked", map[string]any{
 			"vaultPath": v.Path,

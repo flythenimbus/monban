@@ -21,11 +21,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------- 1. tighten payload perms ----------
 
-chown root:wheel /usr/local/bin/monban-pam-helper
-chmod 0755 /usr/local/bin/monban-pam-helper
+# N20: PAM helper + module live under /Library/Monban/ rather than
+# /usr/local/{bin,lib/pam}. /Library/ is root-owned by macOS default
+# and can't be user-chowned without admin action, which removes the
+# "Intel Macs with Homebrew make /usr/local/ user-writable" escalation
+# path. Perms below are belt + suspenders: pam_monban.c's helper_is_safe
+# check refuses to exec the helper unless uid=0 and not world/group
+# writable.
+chown root:wheel /Library/Monban
+chmod 0755 /Library/Monban
 
-chown root:wheel /usr/local/lib/pam/pam_monban.so
-chmod 0644 /usr/local/lib/pam/pam_monban.so
+chown root:wheel /Library/Monban/monban-pam-helper
+chmod 0755 /Library/Monban/monban-pam-helper
+
+chown root:wheel /Library/Monban/pam
+chmod 0755 /Library/Monban/pam
+
+chown root:wheel /Library/Monban/pam/pam_monban.so
+chmod 0644 /Library/Monban/pam/pam_monban.so
 
 chown -R root:wheel /Library/Security/SecurityAgentPlugins/monban-auth.bundle
 chmod -R a+rX      /Library/Security/SecurityAgentPlugins/monban-auth.bundle
@@ -50,9 +63,9 @@ TAG='# monban sudo gate'
 #     sudo. This is strict-FIDO2-only mode for users who want it.
 MODE_FILE="/Library/Application Support/Monban/sudo_mode"
 if [ -f "$MODE_FILE" ] && grep -qE '^required$' "$MODE_FILE" 2>/dev/null; then
-    PAM_LINE='auth required /usr/local/lib/pam/pam_monban.so # monban sudo gate'
+    PAM_LINE='auth required /Library/Monban/pam/pam_monban.so # monban sudo gate'
 else
-    PAM_LINE='auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate'
+    PAM_LINE='auth sufficient /Library/Monban/pam/pam_monban.so # monban sudo gate'
 fi
 
 if [ ! -f "$SUDO_LOCAL" ]; then

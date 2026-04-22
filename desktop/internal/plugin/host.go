@@ -57,6 +57,21 @@ type Plugin struct {
 	pinPromptMu       sync.Mutex
 	pinPromptLastAt   time.Time
 	pinPromptLastBody string
+
+	// N11: per-plugin cooldown between auth.assert_with_pin calls.
+	// Wrong PINs submitted via this RPC decrement the security key's
+	// hardware retry counter, so a buggy or compromised plugin could
+	// (in the absence of rate-limiting) brick the key in milliseconds.
+	// Paired with the global consecutive-failure lockout in Host.
+	assertPinMu     sync.Mutex
+	assertPinLastAt time.Time
+
+	// N12: token-bucket rate limit for log-notify messages so a
+	// plugin cannot drown the host log (local DoS, storage burn).
+	// Leaky bucket: refilled on consume proportional to elapsed time.
+	logBucketMu     sync.Mutex
+	logBucketTokens float64
+	logBucketLastAt time.Time
 }
 
 // HostConfig is the configuration handed to NewHost.
@@ -123,7 +138,28 @@ type Host struct {
 
 	mu      sync.Mutex
 	plugins map[string]*Plugin
+
+	// N11: global, cross-plugin lockout state for auth.assert_with_pin.
+	// Protects the security key from rapid-drain attacks initiated by
+	// a malicious/buggy signed plugin. After assertFailureThreshold
+	// consecutive failures across *any* plugin we refuse further
+	// auth.assert_with_pin calls until the user proves possession
+	// through the main UI unlock (which calls NotifyUserUnlockSucceeded
+	// to reset). See the thread around N11 for the full design note.
+	assertStateMu  sync.Mutex
+	assertFailures int
+	assertLocked   bool
 }
+
+// Thresholds for the N11 cross-plugin assert-with-pin lockout. Values
+// are deliberately conservative: 2 consecutive failures leaves 1
+// hardware PIN retry of headroom before the CTAP2 soft-lock kicks in
+// (3-per-cycle), and 30s between calls prevents rapid drain of the
+// 8-retry lifetime counter.
+const (
+	assertFailureThreshold = 2
+	assertPinMinInterval   = 30 * time.Second
+)
 
 // NewHost constructs a Host. It does not spawn any plugins yet.
 func NewHost(cfg HostConfig) *Host {
@@ -246,17 +282,15 @@ func (h *Host) loadOne(ctx context.Context, dir string) error {
 		return fmt.Errorf("binary not found: %w", err)
 	}
 
-	// Close the swap-after-extract window: if the manifest (signed by
-	// release key) pins a SHA-256 for this platform's binary, verify
-	// that the on-disk bytes still match. Same-uid malware that
-	// overwrites plugins/<name>/bin/<binary> between extraction and
-	// the call to exec is caught here.
-	if wantHex := m.BinarySHA256ForCurrentPlatform(); wantHex != "" {
-		if err := verifyFileSHA256(binPath, wantHex); err != nil {
-			return fmt.Errorf("binary hash: %w", err)
+	// N2 production gate: release builds enforce binary_sha256
+	// presence via the `production` build tag; dev builds tolerate
+	// absence so iteration doesn't need build.sh on every change.
+	wantHex := m.BinarySHA256ForCurrentPlatform()
+	if wantHex == "" {
+		if requireBinaryHashPin() {
+			return fmt.Errorf("release build refuses to load plugin %q: manifest missing binary_sha256", m.Name)
 		}
-	} else {
-		h.log.Printf("plugin: %s manifest has no binary_sha256 — skipping swap-after-extract check", m.Name)
+		h.log.Printf("plugin: %s manifest has no binary_sha256 — dev build, skipping swap-after-extract check (production builds will reject this)", m.Name)
 	}
 
 	h.mu.Lock()
@@ -266,7 +300,13 @@ func (h *Host) loadOne(ctx context.Context, dir string) error {
 	}
 	h.mu.Unlock()
 
-	p, err := h.spawn(ctx, m, dir, binPath)
+	// Pass wantHex through to spawn: the actual SHA-256 verification
+	// runs right before cmd.Start() so the window a same-uid attacker
+	// has to swap the binary between verify and exec is as narrow as
+	// possible (N3). The window cannot be closed entirely in Go —
+	// execve() resolves the path at syscall time and there is no
+	// portable fexecve — but minimizing it is still worthwhile.
+	p, err := h.spawn(ctx, m, dir, binPath, wantHex)
 	if err != nil {
 		return err
 	}
@@ -286,7 +326,7 @@ func (h *Host) loadOne(ctx context.Context, dir string) error {
 // The caller's ctx scopes only the hello handshake; the subprocess itself
 // is tied to the Host's lifetimeCtx so it survives past the caller's
 // deferred cancels.
-func (h *Host) spawn(helloCtx context.Context, m *Manifest, dir, binPath string) (*Plugin, error) {
+func (h *Host) spawn(helloCtx context.Context, m *Manifest, dir, binPath, wantHex string) (*Plugin, error) {
 	pluginCtx, cancel := context.WithCancel(h.lifetimeCtx)
 
 	cmd := exec.CommandContext(pluginCtx, binPath)
@@ -307,6 +347,17 @@ func (h *Host) spawn(helloCtx context.Context, m *Manifest, dir, binPath string)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("stderr pipe: %w", err)
+	}
+
+	// Hash verification immediately before exec (N3). The race between
+	// this check and the syscall's path resolution cannot be closed in
+	// portable Go, but keeping these two operations adjacent minimizes
+	// the window.
+	if wantHex != "" {
+		if err := verifyFileSHA256(binPath, wantHex); err != nil {
+			cancel()
+			return nil, fmt.Errorf("binary hash: %w", err)
+		}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -430,7 +481,16 @@ func (h *Host) handleNotify(p *Plugin, msg *Message) {
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(msg.Params, &params)
-		h.log.Printf("plugin[%s] %s: %s", p.Manifest.Name, params.Level, params.Message)
+		// N12: rate-limit + sanitise every log-notify line. Without
+		// the rate limit a plugin can drown the host log file as a
+		// local DoS; without sanitisation it can smuggle control
+		// chars or fake host-log prefixes. Sharing sanitizeStderrLine
+		// with the stderr forwarder keeps the two channels aligned.
+		if !p.allowLogNotify() {
+			return
+		}
+		level := sanitizePromptField(params.Level, 16)
+		h.log.Printf("plugin[%s] %s: %s", p.Manifest.Name, level, sanitizeStderrLine(params.Message))
 	default:
 		h.log.Printf("plugin[%s]: unhandled notify %q", p.Manifest.Name, msg.Method)
 	}
@@ -452,6 +512,16 @@ func (h *Host) handlePluginRequest(p *Plugin, msg *Message) {
 }
 
 func (h *Host) handleAuthAssertWithPin(p *Plugin, msg *Message) {
+	// N13: capability gate — only plugins that declared
+	// fido2_assert_with_pin in their signed manifest reach this
+	// handler. Any other plugin (observer, generic auth_gate, etc.)
+	// gets a "method not permitted" reply. This bounds the blast
+	// radius of a malicious signed plugin: the RPC is not universal
+	// ambient authority, it's an opt-in capability.
+	if !p.Manifest.HasCapability(CapFIDOAssertWithPin) {
+		h.replyError(p, msg.ID, -32601, "auth.assert_with_pin: missing capability "+CapFIDOAssertWithPin)
+		return
+	}
 	if h.cfg.OnAuthAssertWithPin == nil {
 		h.replyError(p, msg.ID, -32601, "auth.assert_with_pin not supported by host")
 		return
@@ -467,6 +537,23 @@ func (h *Host) handleAuthAssertWithPin(p *Plugin, msg *Message) {
 		h.replyError(p, msg.ID, -32602, "pin required")
 		return
 	}
+
+	// N11 gate 2: global consecutive-failure lockout. A successful
+	// user unlock via the main UI clears this — see NotifyUserUnlockSucceeded.
+	if h.assertLockedOut() {
+		h.log.Printf("plugin[%s]: auth.assert_with_pin refused — locked out after %d consecutive plugin-initiated failures. User must unlock Monban to reset.", p.Manifest.Name, assertFailureThreshold)
+		h.replyError(p, msg.ID, -32000, fmt.Sprintf("plugin auth locked out: %d consecutive failures. Unlock Monban to reset.", assertFailureThreshold))
+		return
+	}
+	// N11 gate 1: per-plugin cooldown. Blocks a single plugin from
+	// firing back-to-back wrong-PIN calls and burning the key's
+	// hardware retry counter.
+	if err := p.throttleAssertPin(); err != nil {
+		h.log.Printf("plugin[%s]: auth.assert_with_pin throttled: %v", p.Manifest.Name, err)
+		h.replyError(p, msg.ID, -32000, "rate limited")
+		return
+	}
+
 	// FIDO2 assertion blocks waiting for the user to touch the key;
 	// give it up to 2 minutes.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -474,9 +561,15 @@ func (h *Host) handleAuthAssertWithPin(p *Plugin, msg *Message) {
 
 	ok, err := h.cfg.OnAuthAssertWithPin(ctx, params.Pin)
 	if err != nil {
+		// err includes CTAP2 PIN-retry errors (wrong PIN, soft-lock).
+		// Count these against the lockout threshold so a plugin that
+		// emits garbage repeatedly hits the global gate before it can
+		// drain the device-lifetime counter.
+		h.recordAssertOutcome(false)
 		h.replyError(p, msg.ID, -32000, err.Error())
 		return
 	}
+	h.recordAssertOutcome(ok)
 	resultBytes, _ := json.Marshal(map[string]bool{"ok": ok})
 	_ = p.codec.Write(&Message{ID: msg.ID, Type: TypeResponse, Result: resultBytes})
 }
@@ -735,6 +828,96 @@ func randomID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// Log-notify rate-limit parameters. Burst capacity tolerates chatty
+// startup lines; steady-state rate blocks sustained spam.
+const (
+	logBucketRatePerSec = 20.0
+	logBucketCapacity   = 100.0
+)
+
+// allowLogNotify reports whether this plugin is allowed to emit
+// another log-notify line right now. Leaky-bucket implementation:
+// tokens refill at logBucketRatePerSec up to logBucketCapacity;
+// each call consumes 1 token. Out-of-tokens → drop the message.
+func (p *Plugin) allowLogNotify() bool {
+	p.logBucketMu.Lock()
+	defer p.logBucketMu.Unlock()
+	now := time.Now()
+	if p.logBucketLastAt.IsZero() {
+		// First call: start with a full bucket.
+		p.logBucketTokens = logBucketCapacity
+	} else {
+		elapsed := now.Sub(p.logBucketLastAt).Seconds()
+		p.logBucketTokens += elapsed * logBucketRatePerSec
+		if p.logBucketTokens > logBucketCapacity {
+			p.logBucketTokens = logBucketCapacity
+		}
+	}
+	p.logBucketLastAt = now
+	if p.logBucketTokens < 1 {
+		return false
+	}
+	p.logBucketTokens--
+	return true
+}
+
+// throttleAssertPin enforces the per-plugin minimum interval between
+// auth.assert_with_pin calls. Returns an error if the plugin is asking
+// again too soon; caller surfaces "rate limited" to the plugin.
+func (p *Plugin) throttleAssertPin() error {
+	p.assertPinMu.Lock()
+	defer p.assertPinMu.Unlock()
+	now := time.Now()
+	if !p.assertPinLastAt.IsZero() {
+		if now.Sub(p.assertPinLastAt) < assertPinMinInterval {
+			return fmt.Errorf("auth.assert_with_pin: must wait %s between calls", assertPinMinInterval)
+		}
+	}
+	p.assertPinLastAt = now
+	return nil
+}
+
+// assertLockedOut reports whether the cross-plugin lockout is active.
+// Once set, every plugin's auth.assert_with_pin is refused until the
+// user proves possession via the main-UI unlock path, which calls
+// NotifyUserUnlockSucceeded to clear the flag.
+func (h *Host) assertLockedOut() bool {
+	h.assertStateMu.Lock()
+	defer h.assertStateMu.Unlock()
+	return h.assertLocked
+}
+
+// recordAssertOutcome updates the global consecutive-failure counter
+// based on an auth.assert_with_pin outcome. ok=true resets the counter
+// (matches the YubiKey's own on-correct-PIN reset semantics). ok=false
+// increments; hitting assertFailureThreshold latches the lockout until
+// a user-initiated unlock clears it.
+func (h *Host) recordAssertOutcome(ok bool) {
+	h.assertStateMu.Lock()
+	defer h.assertStateMu.Unlock()
+	if ok {
+		h.assertFailures = 0
+		return
+	}
+	h.assertFailures++
+	if h.assertFailures >= assertFailureThreshold {
+		h.assertLocked = true
+		h.log.Printf("plugin: auth.assert_with_pin global lockout engaged after %d consecutive failures — user must unlock Monban to reset", h.assertFailures)
+	}
+}
+
+// NotifyUserUnlockSucceeded is called by the host-level App when the
+// user successfully unlocks Monban via the main UI. Clearing the
+// lockout here (rather than on plugin success) is deliberate: a
+// compromised plugin must not be able to reset its own kill-switch by
+// generating a successful assertion against stolen credentials.
+func (h *Host) NotifyUserUnlockSucceeded() {
+	h.assertStateMu.Lock()
+	defer h.assertStateMu.Unlock()
+	h.assertFailures = 0
+	h.assertLocked = false
+}
+
 // pinPromptMinInterval is the floor between any two request_pin_touch
 // prompts from the same plugin. Tight enough that legitimate multi-step
 // flows aren't annoying, loose enough to kill spam attempts.
@@ -766,10 +949,18 @@ func (p *Plugin) allowPinTouchPrompt(title, subtitle string) error {
 	return nil
 }
 
-// sanitizePromptField strips control characters, ANSI escapes, and
-// newlines from a plugin-supplied display string, then clips to max
-// runes. Used on title/subtitle before they hit the UI so a plugin
-// can't render arbitrary formatting or inject misleading content.
+// sanitizePromptField strips characters that can misrepresent a
+// prompt's displayed text from a plugin-supplied string, then clips
+// to max runes. Covers:
+//
+//   - ASCII controls (incl. \n, \r, \t, ESC for ANSI)
+//   - Unicode bidi overrides and embeddings (U+202A..202E, U+2066..2069)
+//     that swap visual direction so a title renders reversed
+//   - Zero-width characters (U+200B..200D, U+FEFF) that hide content
+//   - LRM/RLM (U+200E/200F) that silently reshape neighbouring glyphs
+//
+// Without this a malicious plugin can render "Approve System Update"
+// as a visually different message via a U+202E RTL override.
 func sanitizePromptField(s string, max int) string {
 	if s == "" {
 		return s
@@ -777,7 +968,10 @@ func sanitizePromptField(s string, max int) string {
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f {
-			continue // strip control chars (incl. \n, \r, \t, ESC)
+			continue
+		}
+		if isUnicodeFormattingControl(r) {
+			continue
 		}
 		out = append(out, r)
 		if len(out) >= max {
@@ -785,6 +979,23 @@ func sanitizePromptField(s string, max int) string {
 		}
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// isUnicodeFormattingControl reports whether r is a Unicode bidi/
+// formatting character that can misrepresent the visual rendering of
+// a string. Enumerated explicitly — these are a small closed set and
+// pulling in unicode tables for category Cf would also strip benign
+// code points like soft hyphen.
+func isUnicodeFormattingControl(r rune) bool {
+	switch r {
+	case 0x200B, 0x200C, 0x200D, // zero-width space/non-joiner/joiner
+		0x200E, 0x200F, // LRM, RLM
+		0x202A, 0x202B, 0x202C, 0x202D, 0x202E, // bidi embed/override
+		0x2066, 0x2067, 0x2068, 0x2069, // isolate controls
+		0xFEFF: // BOM / zero-width no-break space
+		return true
+	}
+	return false
 }
 
 // verifyFileSHA256 returns nil if the file at path has the given hex

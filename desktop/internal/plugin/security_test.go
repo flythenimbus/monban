@@ -1,8 +1,14 @@
 package plugin
 
 import (
+	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,24 +106,31 @@ func TestVerifyFileSHA256(t *testing.T) {
 }
 
 // TestSanitizePromptField confirms M3's title/subtitle hygiene strips
-// control chars and clips to the configured max.
+// control chars and clips to the configured max. N6: also strips
+// Unicode bidi/zero-width formatting that could misrepresent the
+// displayed text.
 func TestSanitizePromptField(t *testing.T) {
 	cases := []struct {
-		in, out string
-		max     int
+		name, in, out string
+		max           int
 	}{
-		{"hello", "hello", 100},
-		{"hello\nworld", "helloworld", 100},
-		{"hello\x1b[31mred", "hello[31mred", 100},
-		{"tab\tsep", "tabsep", 100},
-		{"\x00\x01\x02\x03", "", 100},
-		{"aaaaaaaaaaaaaaaa", "aaaaa", 5},
+		{"plain", "hello", "hello", 100},
+		{"newline stripped", "hello\nworld", "helloworld", 100},
+		{"ansi stripped", "hello\x1b[31mred", "hello[31mred", 100},
+		{"tab stripped", "tab\tsep", "tabsep", 100},
+		{"controls only", "\x00\x01\x02\x03", "", 100},
+		{"clip", "aaaaaaaaaaaaaaaa", "aaaaa", 5},
+		{"rtl override stripped", "Approve\u202Eetadpu metsyS", "Approveetadpu metsyS", 100},
+		{"zero-width stripped", "Approve\u200BSystem\u200CUpdate", "ApproveSystemUpdate", 100},
+		{"bom stripped", "\uFEFFhello", "hello", 100},
 	}
 	for _, c := range cases {
-		got := sanitizePromptField(c.in, c.max)
-		if got != c.out {
-			t.Errorf("sanitizePromptField(%q, %d) = %q, want %q", c.in, c.max, got, c.out)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			got := sanitizePromptField(c.in, c.max)
+			if got != c.out {
+				t.Errorf("sanitizePromptField(%q, %d) = %q, want %q", c.in, c.max, got, c.out)
+			}
+		})
 	}
 }
 
@@ -131,5 +144,148 @@ func TestSanitizeStderrLine(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "monban: fake log") {
 		t.Errorf("sanitizeStderrLine mangled prefix: %q", got)
+	}
+}
+
+// TestAssertPinRateLimit covers N11's per-plugin cooldown. First
+// call must pass; a second call inside the cooldown window must be
+// refused with an error.
+func TestAssertPinRateLimit(t *testing.T) {
+	p := &Plugin{}
+	if err := p.throttleAssertPin(); err != nil {
+		t.Fatalf("first call must pass: %v", err)
+	}
+	if err := p.throttleAssertPin(); err == nil {
+		t.Errorf("second immediate call must be rate-limited")
+	}
+}
+
+// TestAssertGlobalLockout covers N11's cross-plugin lockout. N
+// consecutive failures must latch the flag, and only a user-initiated
+// unlock (NotifyUserUnlockSucceeded) may clear it.
+func TestAssertGlobalLockout(t *testing.T) {
+	h := NewHost(HostConfig{HostVersion: "0.0.0-test"})
+
+	// Under threshold — no lockout.
+	for i := 0; i < assertFailureThreshold-1; i++ {
+		h.recordAssertOutcome(false)
+	}
+	if h.assertLockedOut() {
+		t.Fatalf("locked out before threshold")
+	}
+
+	// Hit the threshold.
+	h.recordAssertOutcome(false)
+	if !h.assertLockedOut() {
+		t.Fatalf("should be locked out after %d failures", assertFailureThreshold)
+	}
+
+	// A further plugin-side success must NOT clear the lockout —
+	// only a user-initiated unlock does.
+	h.recordAssertOutcome(true)
+	if !h.assertLockedOut() {
+		t.Errorf("plugin success cleared lockout; only NotifyUserUnlockSucceeded should")
+	}
+
+	h.NotifyUserUnlockSucceeded()
+	if h.assertLockedOut() {
+		t.Errorf("NotifyUserUnlockSucceeded did not clear lockout")
+	}
+}
+
+// TestLogNotifyTokenBucket checks the N12 rate limit: a burst up to
+// capacity is allowed, subsequent calls without elapsed time are
+// dropped.
+func TestLogNotifyTokenBucket(t *testing.T) {
+	p := &Plugin{}
+	// Burn the whole bucket.
+	for i := 0; i < int(logBucketCapacity); i++ {
+		if !p.allowLogNotify() {
+			t.Fatalf("burst call %d refused, expected bucket capacity %v", i, logBucketCapacity)
+		}
+	}
+	// Next call should be refused (no time to refill).
+	if p.allowLogNotify() {
+		t.Errorf("call past capacity accepted, expected drop")
+	}
+}
+
+// TestInstallRollbackOnConsentCancel covers N21: when the second-
+// touch consent (or any post-commit step) fails, the plugin dir must
+// be rolled back so next Monban start doesn't load a half-installed
+// plugin whose privileged side-effects never ran.
+func TestInstallRollbackOnConsentCancel(t *testing.T) {
+	priv := withTempKey(t)
+	pluginsDir := t.TempDir()
+	plat := CurrentPlatform()
+
+	binBytes := []byte("fake-binary")
+	binHash := sha256.Sum256(binBytes)
+
+	manifest := map[string]any{
+		"name":          "rollback-test",
+		"version":       "0.1.0",
+		"monban_api":    HostAPIVersion,
+		"platforms":     []string{plat},
+		"kind":          []string{"system"},
+		"binary":        map[string]string{plat: "bin/rollback-test"},
+		"binary_sha256": map[string]string{plat: hex.EncodeToString(binHash[:])},
+		"install_pkg":   "installer.pkg",
+	}
+	mBytes, _ := json.Marshal(manifest)
+	mSig := ed25519.Sign(priv, mBytes)
+	tar := buildTarGz(t, map[string][]byte{
+		"bin/rollback-test": binBytes,
+		"installer.pkg":     []byte("fake-pkg"),
+	})
+	tarSig := ed25519.Sign(priv, tar)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/m", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(mBytes) })
+	mux.HandleFunc("/ms", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(mSig) })
+	mux.HandleFunc("/t", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tar) })
+	mux.HandleFunc("/ts", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(tarSig) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	inst := &Installer{
+		PluginsDir:    pluginsDir,
+		HTTPClient:    srv.Client(),
+		RunInstallPkg: func(context.Context, string) error { return nil },
+		ConfirmInstallPkg: func(context.Context, *Manifest) error {
+			return errors.New("user cancelled")
+		},
+	}
+	entry := &CatalogEntry{
+		Name:           "rollback-test",
+		Version:        "0.1.0",
+		Platforms:      []string{plat},
+		ManifestURL:    srv.URL + "/m",
+		ManifestSigURL: srv.URL + "/ms",
+		TarballURL:     srv.URL + "/t",
+		TarballSigURL:  srv.URL + "/ts",
+	}
+	if _, err := inst.Install(context.Background(), entry); err == nil {
+		t.Fatal("Install should have failed due to consent cancellation")
+	}
+	if _, err := os.Stat(filepath.Join(pluginsDir, "rollback-test")); !os.IsNotExist(err) {
+		t.Errorf("half-installed plugin dir left behind: Stat err = %v (want NotExist)", err)
+	}
+}
+
+// TestManifestCapabilityCheck confirms Manifest.HasCapability matches
+// declared strings exactly. Guards N13 against a mis-spelled capability
+// name silently bypassing the gate.
+func TestManifestCapabilityCheck(t *testing.T) {
+	m := &Manifest{Capabilities: []string{"pkg_postinstall", CapFIDOAssertWithPin}}
+	if !m.HasCapability(CapFIDOAssertWithPin) {
+		t.Errorf("expected capability %q to match", CapFIDOAssertWithPin)
+	}
+	if m.HasCapability("nonexistent") {
+		t.Errorf("unknown capability must not match")
+	}
+	empty := &Manifest{}
+	if empty.HasCapability(CapFIDOAssertWithPin) {
+		t.Errorf("missing capabilities field must not match any capability")
 	}
 }

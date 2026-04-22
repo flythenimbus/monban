@@ -9,7 +9,9 @@
 //
 // Source lives under desktop/ because it imports monban's internal
 // crypto; compiled output ships with the admin-gate plugin's
-// install_pkg and is placed at /usr/local/bin/monban-pam-helper.
+// install_pkg and is placed at /Library/Monban/monban-pam-helper
+// (N20: /Library/ is root-owned by default so same-uid malware can't
+// replace it the way it could in a user-owned /usr/local/).
 //
 // Environment from pam_monban.so:
 //
@@ -155,6 +157,14 @@ func assertFIDO2(tty *os.File, cfgPath, pin string) error {
 	// /etc/monban/authorized_keys.json). Without this, any sudoer
 	// could replace ~/.config/monban/credentials.json with a
 	// registration to a random YubiKey and satisfy the PAM gate.
+	//
+	// N1: do NOT mutate sc.Credentials with the filtered set — the
+	// stored ConfigHMAC is computed over the full credential list,
+	// and VerifySecureConfig below must see the same list to match.
+	// Instead we keep sc intact and offer only allowlisted credential
+	// IDs to the YubiKey; the key will only produce an assertion for
+	// one of those, so non-allowlisted credentials can never satisfy
+	// the gate even though they remain in sc for HMAC verification.
 	allowed, err := filterAuthorized(sc.Credentials)
 	if err != nil {
 		ttyPrint(tty, "✗ admin allowlist is misconfigured — refusing\n")
@@ -165,13 +175,12 @@ func assertFIDO2(tty *os.File, cfgPath, pin string) error {
 		// is empty. Fall through silently so sudo prompts for password.
 		return errSilent
 	}
-	sc.Credentials = allowed
 
 	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
 		return fmt.Errorf("decode hmac salt: %w", err)
 	}
-	credIDs, err := sc.CollectCredentialIDs()
+	credIDs, err := collectCredentialIDs(allowed)
 	if err != nil {
 		return fmt.Errorf("collect credential ids: %w", err)
 	}
@@ -200,6 +209,16 @@ func assertFIDO2(tty *os.File, cfgPath, pin string) error {
 		return fmt.Errorf("unwrap master secret: %w", err)
 	}
 	defer monban.ZeroBytes(masterSecret)
+
+	// Belt+suspenders: UnwrapMasterSecret iterated the full credential
+	// list (needed so VerifySecureConfig's HMAC matches later). In
+	// practice only an allowlisted credential's wrapped_key can unwrap
+	// with the just-derived wrappingKey — but assert it explicitly so
+	// a future refactor can't weaken the allowlist gate.
+	if !isCredInAllowed(matchedCred, allowed) {
+		ttyPrint(tty, "✗ authenticated key is not in admin allowlist\n")
+		return errSilent
+	}
 
 	if err := monban.VerifyAssertionWithSalt(sc.RpID, matchedCred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err != nil {
 		ttyPrint(tty, "✗ assertion signature verification failed\n")

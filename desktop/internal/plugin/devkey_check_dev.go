@@ -13,3 +13,9 @@ func CheckReleaseKeyConfig() {
 		log.Println("plugin: dev build using committed dev pubkey for verification (ok for local iteration; do not ship)")
 	}
 }
+
+// requireBinaryHashPin reports whether manifests must carry a
+// binary_sha256 entry for the running platform. Dev builds tolerate
+// a missing field so iteration doesn't require running build.sh on
+// every code change; production builds enforce it.
+func requireBinaryHashPin() bool { return false }

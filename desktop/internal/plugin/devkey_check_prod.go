@@ -16,3 +16,9 @@ func CheckReleaseKeyConfig() {
 		log.Fatal("plugin: production build was linked without MONBAN_RELEASE_PUBKEY override — refusing to start. Every release must bake a non-dev plugin pubkey via -ldflags \"-X monban/internal/plugin.ReleasePubKeyHex=<hex>\".")
 	}
 }
+
+// requireBinaryHashPin returns true on production builds: the
+// manifest's binary_sha256 field must be populated for the running
+// platform or the host refuses to load the plugin (N2). Without this
+// the swap-after-extract defence is dormant in shipped binaries.
+func requireBinaryHashPin() bool { return true }

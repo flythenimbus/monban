@@ -73,21 +73,11 @@ jobs:
           mkdir -p release
           cd bin && zip -ry "../release/monban_macos_universal.zip" Monban.app
 
-      - name: Build .pkg installer
-        working-directory: desktop
-        run: |
-          # Strip leading "v" from tag to produce Monban-0.1.0.pkg style filename.
-          VERSION=${GITHUB_REF_NAME#v}
-          task darwin:pkg VERSION="$VERSION"
-          mkdir -p release
-          cp bin/Monban-*.pkg release/
-
       - uses: actions/upload-artifact@v4
         with:
           name: darwin-artifacts
           path: |
             desktop/release/*.zip
-            desktop/release/*.pkg
 
   build-linux-amd64:
     needs: [test]
@@ -198,7 +188,6 @@ jobs:
           cd artifacts
           cat checksums_linux_amd64.txt checksums_linux_arm64.txt > checksums.txt 2>/dev/null || true
           sha256sum monban_*.zip >> checksums.txt 2>/dev/null || true
-          sha256sum Monban-*.pkg >> checksums.txt 2>/dev/null || true
           rm -f checksums_linux_*.txt
 
       - name: Create GitHub release

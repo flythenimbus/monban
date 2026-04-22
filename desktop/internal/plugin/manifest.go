@@ -62,6 +62,31 @@ var validKinds = map[string]bool{
 	"ui":        true,
 }
 
+// Capability names recognised by the host. These gate access to
+// specific RPC handlers — a plugin cannot call an RPC unless its
+// signed manifest declares the matching capability. Strings are
+// deliberately stable wire values, not enum aliases, so old manifests
+// still parse and new capabilities can be added without schema bumps.
+const (
+	// CapFIDOAssertWithPin lets a plugin invoke auth.assert_with_pin
+	// to consume a user-collected PIN and drive a FIDO2 assertion in
+	// the host. Very high risk (wrong PINs decrement the hardware
+	// retry counter — full drain permanently destroys vaults), so
+	// only plugins that genuinely need terminal-sudo flows should
+	// declare it. Admin-gate is the only current declarant.
+	CapFIDOAssertWithPin = "fido2_assert_with_pin"
+)
+
+// HasCapability reports whether the manifest declares cap.
+func (m *Manifest) HasCapability(cap string) bool {
+	for _, c := range m.Capabilities {
+		if c == cap {
+			return true
+		}
+	}
+	return false
+}
+
 var nameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,63}$`)
 
 // ParseManifest decodes and validates raw manifest JSON.

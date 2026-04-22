@@ -31,7 +31,7 @@ task dev
 ## Build
 
 ```bash
-task package        # macOS: builds Monban.app + Monban-<version>.pkg
+task package        # macOS: builds Monban.app
 task linux:package  # Linux: deb/rpm/AppImage
 ```
 
@@ -45,13 +45,13 @@ task test
 
 ### macOS
 
-Install the `.pkg` from `bin/`:
+Move `Monban.app` from `bin/` (or the release zip) to `/Applications`:
 
 ```bash
-sudo installer -pkg bin/Monban-*.pkg -target /
+mv bin/Monban.app /Applications/
 ```
 
-The pkg places `Monban.app` in `/Applications`.
+Monban installs its own LaunchAgent on first run.
 
 ### Linux
 
@@ -65,7 +65,6 @@ Unlock and remove all protected items first, then:
 **macOS:**
 ```bash
 pkill -x Monban 2>/dev/null || true
-sudo pkgutil --forget com.monban.pkg
 sudo rm -rf /Applications/Monban.app
 launchctl unload ~/Library/LaunchAgents/com.monban.agent.plist 2>/dev/null || true
 rm -f ~/Library/LaunchAgents/com.monban.agent.plist

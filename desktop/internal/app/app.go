@@ -412,11 +412,23 @@ func (a *App) InstallPlugin(name, pin string) (retErr error) {
 	pluginsDir := filepath.Join(monban.ConfigDir(), "plugins")
 	installer := plugin.NewInstaller(pluginsDir)
 	installer.VerifyInstallReceipt = verifyInstallReceipt
-	// H5: plugins with install_pkg will run root code via Installer.app.
-	// Require a second FIDO2 touch right before that happens — the
-	// initial reauth at the start of InstallPlugin covered the download
-	// step, not the delegation of root execution.
+	// H5 + N14: plugins with install_pkg will run root code via
+	// Installer.app. Require a second FIDO2 touch right before that
+	// happens, AND surface a frontend overlay so the user understands
+	// what the touch authorises. Without the overlay the second
+	// assertion is a silent touch the user thinks is part of the
+	// first — technically a second FIDO2 proof but not informed
+	// consent.
 	installer.ConfirmInstallPkg = func(_ context.Context, m *plugin.Manifest) error {
+		if a.window != nil {
+			a.window.EmitEvent("install:second-touch-required", map[string]string{
+				"pluginName":  m.Name,
+				"displayName": m.DisplayTitle(),
+			})
+			defer a.window.EmitEvent("install:second-touch-complete", map[string]string{
+				"pluginName": m.Name,
+			})
+		}
 		confirmSecret, rerr := a.fidoReauth(pin)
 		if rerr != nil {
 			return fmt.Errorf("second touch required before %s installer runs: %w", m.Name, rerr)

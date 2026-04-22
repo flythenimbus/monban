@@ -14,6 +14,7 @@
   "capabilities": [
     "system_paths:/etc/pam.d",
     "system_paths:/Library/Security/SecurityAgentPlugins",
-    "pkg_postinstall"
+    "pkg_postinstall",
+    "fido2_assert_with_pin"
   ]
 }
