@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	monbanapp "monban/internal/app"
+	"monban/internal/plugin"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -20,6 +21,10 @@ var assets embed.FS
 var trayIconBytes []byte
 
 func main() {
+	// C4: refuse to start a production binary that still trusts the
+	// committed dev pubkey. Fatal in prod builds, logs a warning in dev.
+	plugin.CheckReleaseKeyConfig()
+
 	app := monbanapp.NewApp()
 
 	wailsApp := application.New(application.Options{
@@ -97,10 +102,22 @@ func main() {
 	// auth_gate plugin. When set, plugins are never loaded — unlock
 	// proceeds as if nothing was installed — so a misconfigured
 	// sso-gate (or any denial chain) can't brick the user's ability
-	// to reach their own vaults. Must be noisy in the log so it's
-	// easy to spot in incident logs / detection pipelines.
+	// to reach their own vaults.
+	//
+	// C1: the flag is gated on a root-owned sentinel at
+	// /etc/monban/allow_disable_plugins. Personal users can `sudo
+	// touch` the file to enable the escape hatch; enterprise MDM
+	// simply never provisions it, so a user in possession of the
+	// YubiKey + PIN can't bypass a corporate auth_gate by adding a
+	// CLI flag to a LaunchAgent or shortcut. Noisy in the log so
+	// incident tooling can spot both the attempt and the bypass.
 	if slices.Contains(os.Args[1:], "--disable-plugins") {
-		log.Println("monban: --disable-plugins passed; skipping plugin host startup")
+		if err := monbanapp.AllowDisablePlugins(); err != nil {
+			log.Printf("monban: --disable-plugins requested but not permitted: %v — starting plugin host anyway", err)
+			app.StartPluginHost(context.Background())
+		} else {
+			log.Println("monban: --disable-plugins passed and sentinel present; skipping plugin host startup")
+		}
 	} else {
 		app.StartPluginHost(context.Background())
 	}

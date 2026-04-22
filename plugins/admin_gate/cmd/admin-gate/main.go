@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // ---------- stdio JSON-RPC (host <-> this plugin) ----------
@@ -322,6 +324,18 @@ func handleHelperConn(w *bufio.Writer, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Minute))
 
+	// Peer-cred gate: the only legitimate client is monban-pam-helper,
+	// which PAM invokes as root during sudo. Rejecting non-root peers
+	// blocks a same-uid rogue process from submitting bad PINs through
+	// auth.assert_with_pin and burning the security key's PIN retry
+	// counter (which, if exhausted, requires factory reset and
+	// permanently destroys every Monban vault).
+	if err := verifyPeerIsRoot(conn); err != nil {
+		logLine(w, "warn", "rejecting helper conn: "+err.Error())
+		writeHelper(conn, helperResponse{Error: "unauthorized peer"})
+		return
+	}
+
 	var req helperRequest
 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
 		writeHelper(conn, helperResponse{Error: "bad request: " + err.Error()})
@@ -358,4 +372,38 @@ func handleHelperConn(w *bufio.Writer, conn net.Conn) {
 func writeHelper(conn io.Writer, resp helperResponse) {
 	b, _ := json.Marshal(resp)
 	_, _ = conn.Write(append(b, '\n'))
+}
+
+// verifyPeerIsRoot uses LOCAL_PEERCRED on the Unix socket to confirm
+// the connecting peer's effective uid is 0 at connect time. This blocks
+// C2 — a same-uid rogue process cannot forge uid 0, so it cannot submit
+// PIN attempts through auth.assert_with_pin and burn down the security
+// key's retry counter. The only legitimate client is monban-pam-helper
+// invoked by PAM during sudo, which always runs as root.
+func verifyPeerIsRoot(conn net.Conn) error {
+	uc, ok := conn.(*net.UnixConn)
+	if !ok {
+		return fmt.Errorf("not a unix socket")
+	}
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("syscall conn: %w", err)
+	}
+	var (
+		cred   *unix.Xucred
+		getErr error
+	)
+	ctrlErr := raw.Control(func(fd uintptr) {
+		cred, getErr = unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
+	})
+	if ctrlErr != nil {
+		return fmt.Errorf("raw.Control: %w", ctrlErr)
+	}
+	if getErr != nil {
+		return fmt.Errorf("LOCAL_PEERCRED: %w", getErr)
+	}
+	if cred.Uid != 0 {
+		return fmt.Errorf("peer uid %d, want 0 (root)", cred.Uid)
+	}
+	return nil
 }

@@ -130,6 +130,13 @@ for target in "${platforms[@]}"; do
         -trimpath -ldflags="-w -s" \
         -o "$stage/bin/admin-gate" ./cmd/admin-gate/
 
+    # Pin the SHA-256 of the binary into the manifest. Host checks this
+    # before spawn — same-uid malware that replaces the extracted
+    # binary with its own copy is caught when the hash doesn't match.
+    bin_sha=$(shasum -a 256 "$stage/bin/admin-gate" | awk '{print $1}')
+    echo "  binary sha256 ($plat) = $bin_sha"
+    printf '%s\t%s\n' "$plat" "$bin_sha" >> "dist/_sha256-$VERSION.tsv"
+
     cp "dist/$PKG_NAME-$plat" "$stage/$PKG_NAME"
     rm -f "dist/$PKG_NAME-$plat"
 
@@ -140,7 +147,16 @@ for target in "${platforms[@]}"; do
     "$MONBAN_SIGN" sign --key "$SIGN_KEY" "dist/$tar_name"
 done
 
-cp manifest.json "dist/admin-gate-${VERSION}-manifest.json"
+# Compose the final manifest with binary_sha256 populated for every
+# platform we built, then sign it. jq picks the $tsv into an object.
+jq_args=(--rawfile tsv "dist/_sha256-$VERSION.tsv")
+jq_filter='
+  .binary_sha256 = (
+    $tsv | split("\n") | map(select(. != "") | split("\t") | {(.[0]): .[1]}) | add
+  )
+'
+jq "${jq_args[@]}" "$jq_filter" manifest.json > "dist/admin-gate-${VERSION}-manifest.json"
+rm -f "dist/_sha256-$VERSION.tsv"
 "$MONBAN_SIGN" sign --key "$SIGN_KEY" "dist/admin-gate-${VERSION}-manifest.json"
 
 echo

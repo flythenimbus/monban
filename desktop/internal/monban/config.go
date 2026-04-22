@@ -277,12 +277,9 @@ func VerifySecureConfig(sc *SecureConfig, masterSecret, hmacSalt []byte) error {
 		return ErrConfigTampered
 	}
 
-	payload := configHMACPayload(sc)
 	mac := hmac.New(sha256.New, authKey)
-	mac.Write([]byte(payload))
-	expected := mac.Sum(nil)
-
-	if !hmac.Equal(stored, expected) {
+	mac.Write([]byte(configHMACPayload(sc)))
+	if !hmac.Equal(stored, mac.Sum(nil)) {
 		return ErrConfigTampered
 	}
 	return nil
@@ -321,29 +318,30 @@ func counterPath() string {
 
 // --- Config HMAC (tamper detection) ---
 
-// configHMACPayload builds a canonical string from the protected fields of the
-// secure config. The output is deterministic regardless of JSON serialisation order.
+// configHMACPayload builds a canonical string from the protected
+// fields of the secure config. Every user-controlled field is
+// length-prefixed so embedded `:` or `\n` cannot be crafted to
+// collide two semantically-different configs into the same canonical
+// string (M2). Output is deterministic regardless of JSON
+// serialisation order.
 func configHMACPayload(sc *SecureConfig) string {
 	var b strings.Builder
 
-	// Identity fields (immutable but must not be swapped)
-	fmt.Fprintf(&b, "rp_id:%s\n", sc.RpID)
-	fmt.Fprintf(&b, "hmac_salt:%s\n", sc.HmacSalt)
+	fmt.Fprintf(&b, "rp_id=%s\n", lp(sc.RpID))
+	fmt.Fprintf(&b, "hmac_salt=%s\n", lp(sc.HmacSalt))
 
-	// Credentials: sorted by credential_id for determinism
 	creds := make([]CredentialEntry, len(sc.Credentials))
 	copy(creds, sc.Credentials)
 	sort.Slice(creds, func(i, j int) bool {
 		return creds[i].CredentialID < creds[j].CredentialID
 	})
 	for _, c := range creds {
-		fmt.Fprintf(&b, "cred:%s:%s:%s:%s:%s\n", c.Label, c.CredentialID, c.PublicKeyX, c.PublicKeyY, c.WrappedKey)
+		fmt.Fprintf(&b, "cred=%s%s%s%s%s\n",
+			lp(c.Label), lp(c.CredentialID), lp(c.PublicKeyX), lp(c.PublicKeyY), lp(c.WrappedKey))
 	}
 
-	// Policy fields
-	fmt.Fprintf(&b, "force_authentication:%v\n", sc.ForceAuthentication)
+	fmt.Fprintf(&b, "force_authentication=%v\n", sc.ForceAuthentication)
 
-	// Vault decrypt modes: sorted by path
 	if len(sc.VaultDecryptModes) > 0 {
 		paths := make([]string, 0, len(sc.VaultDecryptModes))
 		for p := range sc.VaultDecryptModes {
@@ -351,24 +349,20 @@ func configHMACPayload(sc *SecureConfig) string {
 		}
 		sort.Strings(paths)
 		for _, p := range paths {
-			fmt.Fprintf(&b, "vault_mode:%s:%s\n", p, sc.VaultDecryptModes[p])
+			fmt.Fprintf(&b, "vault_mode=%s%s\n", lp(p), lp(string(sc.VaultDecryptModes[p])))
 		}
 	}
 
-	// Vaults: sorted by path for determinism
 	vaults := make([]VaultEntry, len(sc.Vaults))
 	copy(vaults, sc.Vaults)
 	sort.Slice(vaults, func(i, j int) bool { return vaults[i].Path < vaults[j].Path })
 	for _, v := range vaults {
-		fmt.Fprintf(&b, "vault:%s:%s:%s\n", v.Label, v.Path, v.Type)
+		fmt.Fprintf(&b, "vault=%s%s%s\n", lp(v.Label), lp(v.Path), lp(v.Type))
 	}
 
-	fmt.Fprintf(&b, "open_on_startup:%v\n", sc.OpenOnStartup)
-	fmt.Fprintf(&b, "config_counter:%d\n", sc.ConfigCounter)
+	fmt.Fprintf(&b, "open_on_startup=%v\n", sc.OpenOnStartup)
+	fmt.Fprintf(&b, "config_counter=%d\n", sc.ConfigCounter)
 
-	// Plugin settings: sorted by plugin name for determinism. Values are
-	// canonicalised by re-marshalling — protects against serialisation
-	// differences in the stored JSON.
 	if len(sc.PluginSettings) > 0 {
 		names := make([]string, 0, len(sc.PluginSettings))
 		for n := range sc.PluginSettings {
@@ -376,11 +370,18 @@ func configHMACPayload(sc *SecureConfig) string {
 		}
 		sort.Strings(names)
 		for _, n := range names {
-			fmt.Fprintf(&b, "plugin:%s:%s\n", n, canonicalJSON(sc.PluginSettings[n]))
+			fmt.Fprintf(&b, "plugin=%s%s\n", lp(n), lp(canonicalJSON(sc.PluginSettings[n])))
 		}
 	}
 
 	return b.String()
+}
+
+// lp (length-prefix) encodes a string as `<len>:<bytes>`. Used by v2
+// HMAC payload so arbitrary user-controlled input (labels, paths)
+// cannot collide two distinct inputs into the same serialised record.
+func lp(s string) string {
+	return fmt.Sprintf("%d:%s", len(s), s)
 }
 
 // canonicalJSON normalises a raw JSON value so equivalent inputs produce

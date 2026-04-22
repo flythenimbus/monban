@@ -32,6 +32,14 @@ type Installer struct {
 	// launched, not that the user didn't click Cancel). Return a
 	// non-nil error to have Install() fail the whole operation.
 	VerifyInstallReceipt func(ctx context.Context, m *Manifest) error
+	// ConfirmInstallPkg, if set, is called immediately before
+	// RunInstallPkg fires Installer.app. Hosts use it to collect a
+	// fresh FIDO2 touch — H5: the initial InstallPlugin reauth does
+	// not meaningfully cover the delegation of root execution the
+	// install_pkg is about to perform, so a second explicit consent
+	// is required. Returning a non-nil error aborts before any
+	// privileged code runs.
+	ConfirmInstallPkg func(ctx context.Context, m *Manifest) error
 }
 
 // NewInstaller returns an Installer with sensible defaults. Pass an
@@ -137,7 +145,15 @@ func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (string, error
 	// rebind authorizationdb — operations that need root and are
 	// expected to trigger a standard macOS admin password prompt.
 	if m.InstallPkg != "" {
-		pkgPath := filepath.Join(final, m.InstallPkg)
+		// C5: constrain install_pkg path to the plugin directory.
+		// Without this, a signed manifest with
+		// "install_pkg": "../../../Library/.../evil.pkg" would have
+		// Installer.app (running as root) execute arbitrary attacker
+		// code. Mirrors the binary-path check in host.loadOne.
+		pkgPath, err := resolvePluginPath(final, m.InstallPkg)
+		if err != nil {
+			return "", fmt.Errorf("install_pkg: %w", err)
+		}
 		if _, err := os.Stat(pkgPath); err != nil {
 			return "", fmt.Errorf("declared install_pkg %q not in payload: %w", m.InstallPkg, err)
 		}
@@ -147,6 +163,12 @@ func (i *Installer) Install(ctx context.Context, e *CatalogEntry) (string, error
 		// Purge a stale receipt so VerifyInstallReceipt can't mistake a
 		// previous install's marker for this one.
 		_ = os.Remove(legacyInstallReceiptPath(m.Name))
+		// H5: require fresh FIDO2 consent right before root code runs.
+		if i.ConfirmInstallPkg != nil {
+			if err := i.ConfirmInstallPkg(ctx, m); err != nil {
+				return "", fmt.Errorf("install_pkg consent: %w", err)
+			}
+		}
 		if err := i.RunInstallPkg(ctx, pkgPath); err != nil {
 			return "", fmt.Errorf("run install_pkg: %w", err)
 		}

@@ -1,0 +1,4 @@
+# Never commit dev private keys. The matching public key stays checked
+# in so devs can verify locally-signed plugins during iteration, but
+# each developer generates + keeps their own private key.
+*.key

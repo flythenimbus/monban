@@ -23,6 +23,13 @@ type Manifest struct {
 	Hooks        []string          `json:"hooks,omitempty"`
 	Provides     []ProvideSpec     `json:"provides,omitempty"`
 	Binary       map[string]string `json:"binary"`
+	// BinarySHA256 pins the expected SHA-256 of each platform's binary.
+	// Optional today (dev iteration tolerates its absence) but required
+	// at release time — build.sh computes and injects it before signing.
+	// Host verifies the hash at spawn time; mismatch = refuse. Closes
+	// the swap-after-extract window where same-uid malware could
+	// overwrite the extracted binary before exec.
+	BinarySHA256 map[string]string `json:"binary_sha256,omitempty"`
 	InstallPkg   string            `json:"install_pkg,omitempty"`
 	UninstallPkg string            `json:"uninstall_pkg,omitempty"`
 	UIPanel      string            `json:"ui_panel,omitempty"`
@@ -129,6 +136,14 @@ func (m *Manifest) SupportsCurrentPlatform() bool {
 // for the running OS+arch, or empty string if unsupported.
 func (m *Manifest) BinaryForCurrentPlatform() string {
 	return m.Binary[CurrentPlatform()]
+}
+
+// BinarySHA256ForCurrentPlatform returns the expected SHA-256 (hex) of
+// the plugin binary for the running OS+arch, or empty string if the
+// manifest doesn't pin one (older plugins built before hash pinning,
+// or local dev iteration).
+func (m *Manifest) BinarySHA256ForCurrentPlatform() string {
+	return m.BinarySHA256[CurrentPlatform()]
 }
 
 // IsCompatibleAPI checks a plugin's monban_api against the host's

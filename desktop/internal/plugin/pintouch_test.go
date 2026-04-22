@@ -182,8 +182,13 @@ func TestRequestPinTouchInvokesCallback(t *testing.T) {
 	if calls.Load() == 0 {
 		t.Fatal("OnRequestPinTouch was never invoked")
 	}
-	if gotTitle != "System Settings" {
-		t.Errorf("title = %q, want System Settings", gotTitle)
+	// Host prepends "[<plugin-display-name>] " to the plugin-supplied
+	// title so the UI always attributes a prompt to its source (M3).
+	if !strings.Contains(gotTitle, "System Settings") {
+		t.Errorf("title = %q, want to contain System Settings", gotTitle)
+	}
+	if !strings.HasPrefix(gotTitle, "[") {
+		t.Errorf("title = %q, want plugin-name prefix", gotTitle)
 	}
 	if gotSubtitle != "Approve" {
 		t.Errorf("subtitle = %q, want Approve", gotSubtitle)

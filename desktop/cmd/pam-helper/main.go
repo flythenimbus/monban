@@ -98,17 +98,28 @@ func run() error {
 	return assertFIDO2(tty, cfgPath, pin)
 }
 
+// maxPINBytes caps how much we accept from the TTY when reading a PIN.
+// L2: without a cap a pathological write to /dev/tty could stuff many
+// megabytes before we get a newline. FIDO2 PINs are 4–63 UTF-8 bytes
+// by spec; 1 KB is a very generous upper bound that still keeps the
+// helper bounded.
+const maxPINBytes = 1024
+
 // promptPIN reads a PIN from the TTY without echoing it. Falls back
 // to a plain read if term.ReadPassword fails (rare — e.g. if we
-// somehow inherited a non-TTY fd on stdin).
+// somehow inherited a non-TTY fd on stdin). Output is capped at
+// maxPINBytes to prevent runaway input.
 func promptPIN(tty *os.File) (string, error) {
 	ttyPrint(tty, "Security key PIN: ")
 	raw, err := term.ReadPassword(int(tty.Fd()))
 	ttyPrint(tty, "\n")
 	if err == nil {
+		if len(raw) > maxPINBytes {
+			raw = raw[:maxPINBytes]
+		}
 		return string(raw), nil
 	}
-	var buf [256]byte
+	var buf [maxPINBytes]byte
 	n, rerr := tty.Read(buf[:])
 	if rerr != nil && rerr != io.EOF {
 		return "", fmt.Errorf("read PIN: %w", rerr)
@@ -140,6 +151,21 @@ func assertFIDO2(tty *os.File, cfgPath, pin string) error {
 		ttyPrint(tty, "✗ no security keys registered\n")
 		return errSilent
 	}
+	// H3: apply the admin allowlist (if one is provisioned at
+	// /etc/monban/authorized_keys.json). Without this, any sudoer
+	// could replace ~/.config/monban/credentials.json with a
+	// registration to a random YubiKey and satisfy the PAM gate.
+	allowed, err := filterAuthorized(sc.Credentials)
+	if err != nil {
+		ttyPrint(tty, "✗ admin allowlist is misconfigured — refusing\n")
+		return fmt.Errorf("allowlist: %w", err)
+	}
+	if len(allowed) == 0 {
+		// Either the user has no admin-approved keys, or the allowlist
+		// is empty. Fall through silently so sudo prompts for password.
+		return errSilent
+	}
+	sc.Credentials = allowed
 
 	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {

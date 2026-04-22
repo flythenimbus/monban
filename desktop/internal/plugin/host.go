@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,6 +50,13 @@ type Plugin struct {
 	pending     map[string]chan *Message
 	closed      bool
 	terminating bool // set true when the host is intentionally shutting the plugin down
+
+	// M3: rate-limit state for request_pin_touch. Without this a
+	// rogue/compromised plugin can spam the user with lookalike
+	// "Approve X" dialogs to train click-through habits or phish.
+	pinPromptMu       sync.Mutex
+	pinPromptLastAt   time.Time
+	pinPromptLastBody string
 }
 
 // HostConfig is the configuration handed to NewHost.
@@ -194,13 +203,20 @@ func (h *Host) loadOne(ctx context.Context, dir string) error {
 	manifestPath := filepath.Join(dir, "manifest.json")
 	sigPath := manifestPath + ".sig"
 
-	if err := VerifyFile(manifestPath, sigPath); err != nil {
-		return fmt.Errorf("verify signature: %w", err)
-	}
-
+	// H1: read manifest bytes once and verify+parse from the same buffer
+	// to close the TOCTOU between VerifyFile and a second os.ReadFile.
+	// A same-uid attacker could otherwise swap the file after signature
+	// verification but before parse.
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
+	}
+	sig, err := os.ReadFile(sigPath)
+	if err != nil {
+		return fmt.Errorf("read manifest sig: %w", err)
+	}
+	if err := Verify(raw, sig); err != nil {
+		return fmt.Errorf("verify signature: %w", err)
 	}
 	m, err := ParseManifest(raw)
 	if err != nil {
@@ -213,13 +229,34 @@ func (h *Host) loadOne(ctx context.Context, dir string) error {
 		return fmt.Errorf("unsupported platform %s (supported: %v)", CurrentPlatform(), m.Platforms)
 	}
 
+	// C5: resolve the manifest's binary path and verify it stays inside
+	// the plugin directory. Without this, a signed manifest with
+	// "binary": {"darwin-arm64": "../../../usr/bin/osascript"} escapes
+	// the plugin sandbox — extractTarGz guards tarball entries the
+	// same way; this is the parallel check on the manifest's own field.
 	binRel := m.BinaryForCurrentPlatform()
 	if binRel == "" {
 		return fmt.Errorf("no binary entry for %s", CurrentPlatform())
 	}
-	binPath := filepath.Join(dir, binRel)
+	binPath, err := resolvePluginPath(dir, binRel)
+	if err != nil {
+		return fmt.Errorf("binary: %w", err)
+	}
 	if _, err := os.Stat(binPath); err != nil {
 		return fmt.Errorf("binary not found: %w", err)
+	}
+
+	// Close the swap-after-extract window: if the manifest (signed by
+	// release key) pins a SHA-256 for this platform's binary, verify
+	// that the on-disk bytes still match. Same-uid malware that
+	// overwrites plugins/<name>/bin/<binary> between extraction and
+	// the call to exec is caught here.
+	if wantHex := m.BinarySHA256ForCurrentPlatform(); wantHex != "" {
+		if err := verifyFileSHA256(binPath, wantHex); err != nil {
+			return fmt.Errorf("binary hash: %w", err)
+		}
+	} else {
+		h.log.Printf("plugin: %s manifest has no binary_sha256 — skipping swap-after-extract check", m.Name)
 	}
 
 	h.mu.Lock()
@@ -458,6 +495,22 @@ func (h *Host) handleRequestPinTouch(p *Plugin, msg *Message) {
 		}
 	}
 
+	// M3: rate-limit + strip untrusted display fields before the
+	// prompt reaches the UI.
+	req.Title = sanitizePromptField(req.Title, 200)
+	req.Subtitle = sanitizePromptField(req.Subtitle, 300)
+	if err := p.allowPinTouchPrompt(req.Title, req.Subtitle); err != nil {
+		h.log.Printf("plugin %s: pin_touch throttled: %v", p.Manifest.Name, err)
+		h.replyError(p, msg.ID, -32000, "rate limited")
+		return
+	}
+	// Force plugin name into the UI so user always knows who's asking.
+	if req.Title == "" {
+		req.Title = p.Manifest.DisplayTitle()
+	} else {
+		req.Title = "[" + p.Manifest.DisplayTitle() + "] " + req.Title
+	}
+
 	// Give the UI up to 2 minutes to collect a PIN+touch; anything
 	// longer is almost certainly a stuck prompt.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -622,19 +675,53 @@ func (p *Plugin) terminate(grace time.Duration) error {
 	}
 }
 
+// forwardStderr tags each line a plugin writes to stderr with a fixed
+// prefix that includes the plugin name, then strips non-printable bytes
+// + clips length before routing to the host logger. M5 fix: without
+// sanitisation a rogue plugin can emit crafted lines that masquerade
+// as host output in log analysers / SIEMs.
 func forwardStderr(r io.ReadCloser, name string, lg *log.Logger) {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4096), 16*1024)
 	for scanner.Scan() {
-		lg.Printf("plugin[%s] stderr: %s", name, scanner.Text())
+		lg.Printf("plugin[%s] stderr: %s", name, sanitizeStderrLine(scanner.Text()))
 	}
 }
 
+// sanitizeStderrLine strips control chars (incl. ANSI ESC, CR/NL) and
+// clips to 1 KB so a single stderr line can't blow up a log file or
+// render escape sequences into a tail -f'd terminal.
+func sanitizeStderrLine(s string) string {
+	const maxLen = 1024
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r == 0x7f || r < 0x20 {
+			out = append(out, '?')
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
+// envAllowlist is the closed set of host-env variables propagated into
+// a plugin subprocess. Intentionally small — new variables must be
+// added here explicitly. Must never include DYLD_*, LD_*,
+// DYLD_INSERT_LIBRARIES, LD_PRELOAD, LD_LIBRARY_PATH, or any other
+// dynamic-loader injection channel; those classes of variables are
+// implicitly denied by not being in this list. L5: keep the allowlist
+// tight so a future contributor can't accidentally widen it.
+var envAllowlist = []string{"PATH", "HOME", "TMPDIR"}
+
 // sanitizedEnv builds a minimal environment for plugin subprocesses.
-// Leaks nothing beyond PATH, HOME, and MONBAN_PLUGIN_DIR so plugins can
-// locate their own payload files without exposing host env.
+// Leaks nothing beyond envAllowlist + MONBAN_PLUGIN_DIR so plugins can
+// locate their own payload files without inheriting host env.
 func sanitizedEnv(pluginDir string) []string {
 	env := []string{"MONBAN_PLUGIN_DIR=" + pluginDir}
-	for _, k := range []string{"PATH", "HOME", "TMPDIR"} {
+	for _, k := range envAllowlist {
 		if v := os.Getenv(k); v != "" {
 			env = append(env, k+"="+v)
 		}
@@ -646,4 +733,110 @@ func randomID() string {
 	var b [8]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// pinPromptMinInterval is the floor between any two request_pin_touch
+// prompts from the same plugin. Tight enough that legitimate multi-step
+// flows aren't annoying, loose enough to kill spam attempts.
+const pinPromptMinInterval = 5 * time.Second
+
+// pinPromptDuplicateCooldown is the extra cooldown when a plugin sends
+// a prompt with the same title+subtitle back-to-back — the exact shape
+// of a "train the user to click through" attack.
+const pinPromptDuplicateCooldown = 30 * time.Second
+
+// allowPinTouchPrompt enforces M3's rate-limit. Returns an error if the
+// prompt should be throttled (caller surfaces this to the plugin).
+func (p *Plugin) allowPinTouchPrompt(title, subtitle string) error {
+	p.pinPromptMu.Lock()
+	defer p.pinPromptMu.Unlock()
+	now := time.Now()
+	if !p.pinPromptLastAt.IsZero() {
+		since := now.Sub(p.pinPromptLastAt)
+		body := title + "\x00" + subtitle
+		if body == p.pinPromptLastBody && since < pinPromptDuplicateCooldown {
+			return fmt.Errorf("duplicate prompt within %s cooldown", pinPromptDuplicateCooldown)
+		}
+		if since < pinPromptMinInterval {
+			return fmt.Errorf("prompt within %s min interval", pinPromptMinInterval)
+		}
+	}
+	p.pinPromptLastAt = now
+	p.pinPromptLastBody = title + "\x00" + subtitle
+	return nil
+}
+
+// sanitizePromptField strips control characters, ANSI escapes, and
+// newlines from a plugin-supplied display string, then clips to max
+// runes. Used on title/subtitle before they hit the UI so a plugin
+// can't render arbitrary formatting or inject misleading content.
+func sanitizePromptField(s string, max int) string {
+	if s == "" {
+		return s
+	}
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			continue // strip control chars (incl. \n, \r, \t, ESC)
+		}
+		out = append(out, r)
+		if len(out) >= max {
+			break
+		}
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// verifyFileSHA256 returns nil if the file at path has the given hex
+// SHA-256 digest. Case-insensitive on the hex comparison; lengths must
+// match exactly. Used for the manifest-pinned binary-hash check.
+func verifyFileSHA256(path, wantHex string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("read: %w", err)
+	}
+	gotHex := hex.EncodeToString(h.Sum(nil))
+	if !strings.EqualFold(gotHex, wantHex) {
+		return fmt.Errorf("mismatch: got %s, want %s", gotHex, wantHex)
+	}
+	return nil
+}
+
+// resolvePluginPath joins a manifest-declared relative path to the plugin
+// directory and verifies the result stays inside that directory. Blocks
+// C5 for any manifest field that names a payload file (binary,
+// install_pkg, etc.) — without this, a signed manifest with e.g.
+// "binary": "../../../usr/bin/osascript" would escape the plugin
+// sandbox and have the host exec whatever the path points at.
+func resolvePluginPath(dir, rel string) (string, error) {
+	if rel == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	// Manifest payload paths are always relative to the plugin dir.
+	// An absolute-looking path is never what the author intended and
+	// is the classic shape of an escape attempt.
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("manifest path %q must be relative", rel)
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("abs plugin dir: %w", err)
+	}
+	absPath, err := filepath.Abs(filepath.Join(absDir, rel))
+	if err != nil {
+		return "", fmt.Errorf("abs payload path: %w", err)
+	}
+	r, err := filepath.Rel(absDir, absPath)
+	if err != nil {
+		return "", fmt.Errorf("rel payload path: %w", err)
+	}
+	if r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("manifest path %q escapes plugin dir", rel)
+	}
+	return absPath, nil
 }

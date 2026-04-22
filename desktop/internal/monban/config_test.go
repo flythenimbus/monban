@@ -347,6 +347,47 @@ func TestVerifySecureConfigUnsigned(t *testing.T) {
 	}
 }
 
+// TestConfigHMAC_RejectsColonCollision ensures length-prefixing does
+// its job: two configs whose label/path differ only in where a `:`
+// falls cannot produce the same canonical payload (M2 regression).
+func TestConfigHMAC_RejectsColonCollision(t *testing.T) {
+	a := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Vaults:   []VaultEntry{{Label: "A:/", Path: "root", Type: ""}},
+	}
+	b := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Vaults:   []VaultEntry{{Label: "A", Path: "/root", Type: ""}},
+	}
+	if configHMACPayload(a) == configHMACPayload(b) {
+		t.Errorf("length-prefixing should keep %q/%q and %q/%q distinct",
+			a.Vaults[0].Label, a.Vaults[0].Path, b.Vaults[0].Label, b.Vaults[0].Path)
+	}
+}
+
+// TestSignVerifyRoundTrip sanity-checks Sign→Verify on a representative
+// config. Failure here = all users get locked out on next unlock.
+func TestSignVerifyRoundTrip(t *testing.T) {
+	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
+	salt := []byte("test-salt-32-bytes-long-enough!!")
+
+	sc := &SecureConfig{
+		RpID:                "monban.local",
+		HmacSalt:            EncodeB64(salt),
+		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
+		ForceAuthentication: true,
+		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test"}},
+	}
+	if err := SignSecureConfig(sc, master, salt); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySecureConfig(sc, master, salt); err != nil {
+		t.Fatalf("sign/verify round-trip failed: %v", err)
+	}
+}
+
 func TestSignSecureConfigDeterministic(t *testing.T) {
 	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
 	salt := []byte("test-salt-32-bytes-long-enough!!")

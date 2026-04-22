@@ -3,3 +3,5 @@ dist/*.tar.gz
 dist/*.sig
 dist/*.pkg
 dist/stage/
+# Stray binary from `go build ./...` at the module root.
+admin-gate

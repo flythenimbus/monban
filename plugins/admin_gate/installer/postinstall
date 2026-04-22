@@ -34,8 +34,26 @@ chmod -R a+rX      /Library/Security/SecurityAgentPlugins/monban-auth.bundle
 
 SUDO_LOCAL=/etc/pam.d/sudo_local
 TEMPLATE=${SUDO_LOCAL}.template
-PAM_LINE='auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate'
 TAG='# monban sudo gate'
+
+# M4: two PAM control values, picked by the optional MONBAN_SUDO_MODE
+# env var (read from /Library/Application Support/Monban/sudo_mode if
+# present, else defaults to "sufficient"):
+#
+#   sufficient (default) — pass on FIDO2 success, fall through to
+#     Apple password prompt on FIDO2 failure/cancel. Extra factor, no
+#     lockout risk.
+#
+#   required — FIDO2 must succeed; on failure the stack still falls
+#     through (auth required lets later rules run) but because Apple's
+#     pam_opendirectory follows, a user without their key cannot
+#     sudo. This is strict-FIDO2-only mode for users who want it.
+MODE_FILE="/Library/Application Support/Monban/sudo_mode"
+if [ -f "$MODE_FILE" ] && grep -qE '^required$' "$MODE_FILE" 2>/dev/null; then
+    PAM_LINE='auth required /usr/local/lib/pam/pam_monban.so # monban sudo gate'
+else
+    PAM_LINE='auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate'
+fi
 
 if [ ! -f "$SUDO_LOCAL" ]; then
     if [ -f "$TEMPLATE" ]; then

@@ -412,6 +412,18 @@ func (a *App) InstallPlugin(name, pin string) (retErr error) {
 	pluginsDir := filepath.Join(monban.ConfigDir(), "plugins")
 	installer := plugin.NewInstaller(pluginsDir)
 	installer.VerifyInstallReceipt = verifyInstallReceipt
+	// H5: plugins with install_pkg will run root code via Installer.app.
+	// Require a second FIDO2 touch right before that happens — the
+	// initial reauth at the start of InstallPlugin covered the download
+	// step, not the delegation of root execution.
+	installer.ConfirmInstallPkg = func(_ context.Context, m *plugin.Manifest) error {
+		confirmSecret, rerr := a.fidoReauth(pin)
+		if rerr != nil {
+			return fmt.Errorf("second touch required before %s installer runs: %w", m.Name, rerr)
+		}
+		monban.ZeroBytes(confirmSecret)
+		return nil
+	}
 
 	// GUI Installer.app walks the user through screens; allow plenty
 	// of time. The outer timeout also protects against a stuck
@@ -455,6 +467,15 @@ func (a *App) GetPluginSettings(name string) json.RawMessage {
 // and calls settings.apply on the running subprocess so it can validate
 // + react. Requires FIDO2 re-auth — plugin settings are HMAC-covered.
 func (a *App) UpdatePluginSettings(name string, settings json.RawMessage, pin string) error {
+	// L1: hard cap on the settings blob before it touches disk or the
+	// host→plugin pipe. 64 KB is comfortably larger than any sane
+	// settings schema and small enough that a pathological write
+	// can't DoS the host.
+	const maxSettingsBytes = 64 * 1024
+	if len(settings) > maxSettingsBytes {
+		return fmt.Errorf("plugin settings too large: %d bytes (max %d)", len(settings), maxSettingsBytes)
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 

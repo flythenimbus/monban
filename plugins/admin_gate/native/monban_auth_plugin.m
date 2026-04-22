@@ -130,12 +130,22 @@ static BOOL performIPCAuth(const char *socketPath, const char *username, const c
     struct timeval tv = { .tv_sec = MONBAN_IPC_TIMEOUT, .tv_usec = 0 };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    NSString *json = [NSString stringWithFormat:
-        @"{\"user\":\"%s\",\"service\":\"%s\"}\n",
-        username, service ? service : "authorization"];
-
-    NSData *data = [json dataUsingEncoding:NSUTF8StringEncoding];
-    ssize_t sent = write(fd, data.bytes, data.length);
+    /* H4: build request with NSJSONSerialization so any future change
+     * that feeds user-controlled strings through this path can't
+     * produce a malformed / injectable payload. */
+    NSDictionary *payload = @{
+        @"user":    [NSString stringWithUTF8String:username ?: ""],
+        @"service": [NSString stringWithUTF8String:service ?: "authorization"],
+    };
+    NSError *jerr = nil;
+    NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jerr];
+    if (!body || jerr) {
+        close(fd);
+        return NO;
+    }
+    NSMutableData *framed = [NSMutableData dataWithData:body];
+    [framed appendBytes:"\n" length:1];
+    ssize_t sent = write(fd, framed.bytes, framed.length);
     if (sent < 0) {
         close(fd);
         return NO;
@@ -182,14 +192,22 @@ static void cacheInit(void) {
     });
 }
 
-static BOOL cacheLookup(char *usernameOut, size_t usernameCap, uid_t *uidOut) {
+/*
+ * cacheLookup only hits when the cached entry matches the *current*
+ * console user. C3: the cache was previously time-only, which meant
+ * user A's success within 60 s would satisfy a right triggered by
+ * user B (fast user switching, multi-session). Now the caller resolves
+ * the live console user first and passes (uid, username); a cached
+ * entry from a different session is a miss.
+ */
+static BOOL cacheLookup(uid_t wantUID, const char *wantUsername) {
     cacheInit();
     __block BOOL hit = NO;
     dispatch_sync(sCacheQueue, ^{
         if (sCachedAt == nil) return;
         if ([[NSDate date] timeIntervalSinceDate:sCachedAt] > AUTH_CACHE_TTL_SECONDS) return;
-        strlcpy(usernameOut, sCachedUsername, usernameCap);
-        *uidOut = sCachedUID;
+        if (sCachedUID != wantUID) return;
+        if (strncmp(sCachedUsername, wantUsername, sizeof(sCachedUsername)) != 0) return;
         hit = YES;
     });
     return hit;
@@ -271,21 +289,24 @@ static OSStatus MonbanMechanismInvoke(AuthorizationMechanismRef inMechanism) {
         return errAuthorizationSuccess;
     }
 
-    /* Recent-success cache: same admin action, multiple authd calls. */
-    char cachedUsername[256] = {0};
-    uid_t cachedUID = 0;
-    if (cacheLookup(cachedUsername, sizeof(cachedUsername), &cachedUID)) {
-        setAuthContext(cb, mech->engine, cachedUsername, cachedUID);
-        cb->SetResult(mech->engine, kAuthorizationResultAllow);
-        return errAuthorizationSuccess;
-    }
-
-    /* Resolve console user (for socket-home lookup + ctx values). */
+    /*
+     * C3: resolve console user BEFORE cache lookup so the cache can be
+     * keyed to this session. If the console user flipped (fast user
+     * switching, multi-session), we must not inherit user A's cached
+     * success when user B triggers the mechanism.
+     */
     char username[256] = {0};
     uid_t uid = 0;
     char home[1024] = {0};
     if (!resolveConsoleUser(username, sizeof(username), &uid, home, sizeof(home))) {
         cb->SetResult(mech->engine, kAuthorizationResultDeny);
+        return errAuthorizationSuccess;
+    }
+
+    /* Recent-success cache: same admin action, multiple authd calls, same session. */
+    if (cacheLookup(uid, username)) {
+        setAuthContext(cb, mech->engine, username, uid);
+        cb->SetResult(mech->engine, kAuthorizationResultAllow);
         return errAuthorizationSuccess;
     }
 
