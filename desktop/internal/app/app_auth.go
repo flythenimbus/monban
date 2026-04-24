@@ -258,6 +258,68 @@ func (a *App) Unlock(pin string) error {
 	return nil
 }
 
+// Lock encrypts all vaults and clears secrets from memory.
+func (a *App) Lock() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.secureCfg == nil {
+		return fmt.Errorf("config not found")
+	}
+
+	// Restore directory write permission for vault locking
+	monban.UnlockConfigDir()
+
+	hmacSalt, err := a.secureCfg.DecodeHmacSalt()
+	if err != nil {
+		return err
+	}
+
+	var lockErr error
+	for _, v := range a.secureCfg.Vaults {
+		mode := a.secureCfg.VaultDecryptMode(v.Path)
+		if mode == monban.DecryptLazyStrict {
+			lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, v.Path)
+			if err != nil {
+				lockErr = fmt.Errorf("deriving lazy strict key: %w", err)
+				break
+			}
+			if err := monban.LockVaultEntry(lazyKey, v); err != nil {
+				monban.ZeroBytes(lazyKey)
+				lockErr = err
+				break
+			}
+			monban.ZeroBytes(lazyKey)
+		} else {
+			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+				lockErr = err
+				break
+			}
+		}
+	}
+
+	vaults := a.secureCfg.Vaults
+
+	// Always zero secrets and re-lock directory, even on error
+	monban.ZeroBytes(a.masterSecret)
+	monban.ZeroBytes(a.encKey)
+	a.masterSecret = nil
+	a.encKey = nil
+	a.locked = true
+	monban.LockConfigDir()
+
+	for _, v := range vaults {
+		a.pluginHost.Fire("on:vault_locked", map[string]any{
+			"vaultPath": v.Path,
+			"type":      v.Type,
+		})
+	}
+
+	return lockErr
+}
+
+// --- Private helpers ---
+
 // runAuthGate polls every auth_gate provider for an allow/deny verdict.
 // Returns nil on unanimous allow, or a user-facing error on deny. The
 // whole chain is bounded to 10 minutes; each plugin additionally has
@@ -339,64 +401,4 @@ func (a *App) prepareFirstRegistration() (*monban.SecureConfig, []byte, []byte, 
 	}
 
 	return sc, hmacSalt, masterSecret, nil
-}
-
-// Lock encrypts all vaults and clears secrets from memory.
-func (a *App) Lock() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	if a.secureCfg == nil {
-		return fmt.Errorf("config not found")
-	}
-
-	// Restore directory write permission for vault locking
-	monban.UnlockConfigDir()
-
-	hmacSalt, err := a.secureCfg.DecodeHmacSalt()
-	if err != nil {
-		return err
-	}
-
-	var lockErr error
-	for _, v := range a.secureCfg.Vaults {
-		mode := a.secureCfg.VaultDecryptMode(v.Path)
-		if mode == monban.DecryptLazyStrict {
-			lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, v.Path)
-			if err != nil {
-				lockErr = fmt.Errorf("deriving lazy strict key: %w", err)
-				break
-			}
-			if err := monban.LockVaultEntry(lazyKey, v); err != nil {
-				monban.ZeroBytes(lazyKey)
-				lockErr = err
-				break
-			}
-			monban.ZeroBytes(lazyKey)
-		} else {
-			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
-				lockErr = err
-				break
-			}
-		}
-	}
-
-	vaults := a.secureCfg.Vaults
-
-	// Always zero secrets and re-lock directory, even on error
-	monban.ZeroBytes(a.masterSecret)
-	monban.ZeroBytes(a.encKey)
-	a.masterSecret = nil
-	a.encKey = nil
-	a.locked = true
-	monban.LockConfigDir()
-
-	for _, v := range vaults {
-		a.pluginHost.Fire("on:vault_locked", map[string]any{
-			"vaultPath": v.Path,
-			"type":      v.Type,
-		})
-	}
-
-	return lockErr
 }

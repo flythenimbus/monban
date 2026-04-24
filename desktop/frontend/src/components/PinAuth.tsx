@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { cn } from "../util/cn";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { Times } from "./icons/Times";
@@ -7,24 +8,18 @@ interface PinAuthProps {
 	label?: string;
 	onSubmit: (pin: string) => Promise<void>;
 	onCancel: () => void;
+	topGap?: boolean;
 }
 
 export function PinAuth({
 	label = "Authenticate with your security key to apply",
 	onSubmit,
 	onCancel,
+	topGap = false,
 }: PinAuthProps) {
 	const [pin, setPin] = useState("");
 	const [waiting, setWaiting] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);
-
-	useEffect(() => {
-		// Focus without the browser's default scroll-into-view behaviour —
-		// that scroll is what makes the rest of the page appear to slide
-		// in from the top while the window is still tweening to its new
-		// size.
-		inputRef.current?.focus({ preventScroll: true });
-	}, []);
 
 	useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
@@ -46,7 +41,12 @@ export function PinAuth({
 	};
 
 	return (
-		<div className="glass rounded-xl overflow-hidden">
+		<div
+			className={cn(
+				"glass overflow-hidden rounded-b-xl",
+				topGap && "rounded-xl mt-3",
+			)}
+		>
 			<div className="px-4 py-3 bg-accent/5">
 				<div className="text-xs text-text-secondary mb-2">{label}</div>
 				{waiting ? (

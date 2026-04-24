@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "../util/cn";
 import { ChevronDown } from "./icons/ChevronDown";
 
 interface CollapsibleCardProps {
@@ -29,9 +30,10 @@ export function CollapsibleCard({
 			>
 				<div className="min-w-0 flex-1">{header}</div>
 				<span
-					className={`ml-3 text-text-secondary/60 transition-transform ${
-						open ? "rotate-0" : "-rotate-90"
-					}`}
+					className={cn(
+						"ml-3 text-text-secondary/60 transition-transform",
+						open ? "rotate-0" : "-rotate-90",
+					)}
 				>
 					<ChevronDown />
 				</span>

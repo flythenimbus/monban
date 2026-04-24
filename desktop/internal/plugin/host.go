@@ -19,6 +19,8 @@ import (
 	"time"
 )
 
+// --- Types ---
+
 // HelloResult is what a plugin returns to the host's initial hello request.
 type HelloResult struct {
 	Name     string        `json:"name"`
@@ -151,6 +153,21 @@ type Host struct {
 	assertLocked   bool
 }
 
+// PluginStatus is a read-only snapshot of a loaded plugin for UI/API use.
+type PluginStatus struct {
+	Name        string          `json:"name"`
+	DisplayName string          `json:"display_name"`
+	Version     string          `json:"version"`
+	Description string          `json:"description,omitempty"`
+	Kind        []string        `json:"kind"`
+	Hooks       []string        `json:"hooks,omitempty"`
+	Settings    json.RawMessage `json:"settings,omitempty"`
+	Dir         string          `json:"dir"`
+	Loaded      bool            `json:"loaded"`
+}
+
+// --- Constants ---
+
 // Thresholds for the N11 cross-plugin assert-with-pin lockout. Values
 // are deliberately conservative: 2 consecutive failures leaves 1
 // hardware PIN retry of headroom before the CTAP2 soft-lock kicks in
@@ -160,6 +177,34 @@ const (
 	assertFailureThreshold = 2
 	assertPinMinInterval   = 30 * time.Second
 )
+
+// Log-notify rate-limit parameters. Burst capacity tolerates chatty
+// startup lines; steady-state rate blocks sustained spam.
+const (
+	logBucketRatePerSec = 20.0
+	logBucketCapacity   = 100.0
+)
+
+// pinPromptMinInterval is the floor between any two request_pin_touch
+// prompts from the same plugin. Tight enough that legitimate multi-step
+// flows aren't annoying, loose enough to kill spam attempts.
+const pinPromptMinInterval = 5 * time.Second
+
+// pinPromptDuplicateCooldown is the extra cooldown when a plugin sends
+// a prompt with the same title+subtitle back-to-back — the exact shape
+// of a "train the user to click through" attack.
+const pinPromptDuplicateCooldown = 30 * time.Second
+
+// envAllowlist is the closed set of host-env variables propagated into
+// a plugin subprocess. Intentionally small — new variables must be
+// added here explicitly. Must never include DYLD_*, LD_*,
+// DYLD_INSERT_LIBRARIES, LD_PRELOAD, LD_LIBRARY_PATH, or any other
+// dynamic-loader injection channel; those classes of variables are
+// implicitly denied by not being in this list. L5: keep the allowlist
+// tight so a future contributor can't accidentally widen it.
+var envAllowlist = []string{"PATH", "HOME", "TMPDIR"}
+
+// --- Public functions ---
 
 // NewHost constructs a Host. It does not spawn any plugins yet.
 func NewHost(cfg HostConfig) *Host {
@@ -175,19 +220,6 @@ func NewHost(cfg HostConfig) *Host {
 		lifetimeCancel: cancel,
 		plugins:        map[string]*Plugin{},
 	}
-}
-
-// PluginStatus is a read-only snapshot of a loaded plugin for UI/API use.
-type PluginStatus struct {
-	Name        string          `json:"name"`
-	DisplayName string          `json:"display_name"`
-	Version     string          `json:"version"`
-	Description string          `json:"description,omitempty"`
-	Kind        []string        `json:"kind"`
-	Hooks       []string        `json:"hooks,omitempty"`
-	Settings    json.RawMessage `json:"settings,omitempty"`
-	Dir         string          `json:"dir"`
-	Loaded      bool            `json:"loaded"`
 }
 
 // List returns a snapshot of every loaded plugin.
@@ -234,6 +266,91 @@ func (h *Host) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+// LoadOne verifies and spawns a single plugin by directory name under
+// PluginsDir. Used after an install so the new plugin is live without
+// restarting the app.
+func (h *Host) LoadOne(ctx context.Context, dirName string) error {
+	return h.loadOne(ctx, filepath.Join(h.cfg.PluginsDir, dirName))
+}
+
+// Reconfigure sends a settings.apply request to the named plugin and
+// blocks until it replies or the context is cancelled. Plugins may
+// validate the settings and return an error in their response; callers
+// should surface that error to the user rather than silently retrying.
+func (h *Host) Reconfigure(ctx context.Context, name string, settings json.RawMessage) error {
+	h.mu.Lock()
+	p, ok := h.plugins[name]
+	h.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("plugin %q not loaded", name)
+	}
+	_, err := p.request(ctx, "settings.apply", settings)
+	return err
+}
+
+// Unload terminates and removes a single plugin. Used by uninstall: the
+// caller still has to clean up the on-disk plugin dir.
+func (h *Host) Unload(ctx context.Context, name string) error {
+	h.mu.Lock()
+	p, ok := h.plugins[name]
+	if ok {
+		delete(h.plugins, name)
+	}
+	h.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("plugin %q not loaded", name)
+	}
+	_ = p.notify("shutdown", nil)
+	if err := p.terminate(3 * time.Second); err != nil {
+		h.log.Printf("plugin[%s]: unload: %v", name, err)
+	}
+	return nil
+}
+
+// Shutdown signals every loaded plugin to exit, waits for a grace period,
+// then SIGKILLs stragglers.
+func (h *Host) Shutdown(ctx context.Context) {
+	h.mu.Lock()
+	plugins := make([]*Plugin, 0, len(h.plugins))
+	for _, p := range h.plugins {
+		plugins = append(plugins, p)
+	}
+	h.plugins = map[string]*Plugin{}
+	h.mu.Unlock()
+
+	var wg sync.WaitGroup
+	for _, p := range plugins {
+		wg.Add(1)
+		go func(p *Plugin) {
+			defer wg.Done()
+			// Notify-style shutdown, then wait up to 3s for exit, then kill.
+			_ = p.notify("shutdown", nil)
+			if err := p.terminate(3 * time.Second); err != nil {
+				h.log.Printf("plugin[%s]: shutdown: %v", p.Manifest.Name, err)
+			}
+		}(p)
+	}
+	wg.Wait()
+
+	// Stragglers attached via lifetimeCtx get signalled now in case
+	// any plugin outlived terminate() somehow.
+	h.lifetimeCancel()
+}
+
+// NotifyUserUnlockSucceeded is called by the host-level App when the
+// user successfully unlocks Monban via the main UI. Clearing the
+// lockout here (rather than on plugin success) is deliberate: a
+// compromised plugin must not be able to reset its own kill-switch by
+// generating a successful assertion against stolen credentials.
+func (h *Host) NotifyUserUnlockSucceeded() {
+	h.assertStateMu.Lock()
+	defer h.assertStateMu.Unlock()
+	h.assertFailures = 0
+	h.assertLocked = false
+}
+
+// --- Private Host methods ---
 
 func (h *Host) loadOne(ctx context.Context, dir string) error {
 	manifestPath := filepath.Join(dir, "manifest.json")
@@ -626,76 +743,36 @@ func (h *Host) replyError(p *Plugin, id string, code int, message string) {
 	})
 }
 
-// Reconfigure sends a settings.apply request to the named plugin and
-// blocks until it replies or the context is cancelled. Plugins may
-// validate the settings and return an error in their response; callers
-// should surface that error to the user rather than silently retrying.
-func (h *Host) Reconfigure(ctx context.Context, name string, settings json.RawMessage) error {
-	h.mu.Lock()
-	p, ok := h.plugins[name]
-	h.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("plugin %q not loaded", name)
-	}
-	_, err := p.request(ctx, "settings.apply", settings)
-	return err
+// assertLockedOut reports whether the cross-plugin lockout is active.
+// Once set, every plugin's auth.assert_with_pin is refused until the
+// user proves possession via the main-UI unlock path, which calls
+// NotifyUserUnlockSucceeded to clear the flag.
+func (h *Host) assertLockedOut() bool {
+	h.assertStateMu.Lock()
+	defer h.assertStateMu.Unlock()
+	return h.assertLocked
 }
 
-// Unload terminates and removes a single plugin. Used by uninstall: the
-// caller still has to clean up the on-disk plugin dir.
-func (h *Host) Unload(ctx context.Context, name string) error {
-	h.mu.Lock()
-	p, ok := h.plugins[name]
+// recordAssertOutcome updates the global consecutive-failure counter
+// based on an auth.assert_with_pin outcome. ok=true resets the counter
+// (matches the YubiKey's own on-correct-PIN reset semantics). ok=false
+// increments; hitting assertFailureThreshold latches the lockout until
+// a user-initiated unlock clears it.
+func (h *Host) recordAssertOutcome(ok bool) {
+	h.assertStateMu.Lock()
+	defer h.assertStateMu.Unlock()
 	if ok {
-		delete(h.plugins, name)
+		h.assertFailures = 0
+		return
 	}
-	h.mu.Unlock()
-	if !ok {
-		return fmt.Errorf("plugin %q not loaded", name)
+	h.assertFailures++
+	if h.assertFailures >= assertFailureThreshold {
+		h.assertLocked = true
+		h.log.Printf("plugin: auth.assert_with_pin global lockout engaged after %d consecutive failures — user must unlock Monban to reset", h.assertFailures)
 	}
-	_ = p.notify("shutdown", nil)
-	if err := p.terminate(3 * time.Second); err != nil {
-		h.log.Printf("plugin[%s]: unload: %v", name, err)
-	}
-	return nil
 }
 
-// LoadOne verifies and spawns a single plugin by directory name under
-// PluginsDir. Used after an install so the new plugin is live without
-// restarting the app.
-func (h *Host) LoadOne(ctx context.Context, dirName string) error {
-	return h.loadOne(ctx, filepath.Join(h.cfg.PluginsDir, dirName))
-}
-
-// Shutdown signals every loaded plugin to exit, waits for a grace period,
-// then SIGKILLs stragglers.
-func (h *Host) Shutdown(ctx context.Context) {
-	h.mu.Lock()
-	plugins := make([]*Plugin, 0, len(h.plugins))
-	for _, p := range h.plugins {
-		plugins = append(plugins, p)
-	}
-	h.plugins = map[string]*Plugin{}
-	h.mu.Unlock()
-
-	var wg sync.WaitGroup
-	for _, p := range plugins {
-		wg.Add(1)
-		go func(p *Plugin) {
-			defer wg.Done()
-			// Notify-style shutdown, then wait up to 3s for exit, then kill.
-			_ = p.notify("shutdown", nil)
-			if err := p.terminate(3 * time.Second); err != nil {
-				h.log.Printf("plugin[%s]: shutdown: %v", p.Manifest.Name, err)
-			}
-		}(p)
-	}
-	wg.Wait()
-
-	// Stragglers attached via lifetimeCtx get signalled now in case
-	// any plugin outlived terminate() somehow.
-	h.lifetimeCancel()
-}
+// --- Private Plugin methods ---
 
 // request sends a request and blocks until the response arrives or the
 // context is cancelled.
@@ -768,73 +845,6 @@ func (p *Plugin) terminate(grace time.Duration) error {
 	}
 }
 
-// forwardStderr tags each line a plugin writes to stderr with a fixed
-// prefix that includes the plugin name, then strips non-printable bytes
-// + clips length before routing to the host logger. M5 fix: without
-// sanitisation a rogue plugin can emit crafted lines that masquerade
-// as host output in log analysers / SIEMs.
-func forwardStderr(r io.ReadCloser, name string, lg *log.Logger) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 4096), 16*1024)
-	for scanner.Scan() {
-		lg.Printf("plugin[%s] stderr: %s", name, sanitizeStderrLine(scanner.Text()))
-	}
-}
-
-// sanitizeStderrLine strips control chars (incl. ANSI ESC, CR/NL) and
-// clips to 1 KB so a single stderr line can't blow up a log file or
-// render escape sequences into a tail -f'd terminal.
-func sanitizeStderrLine(s string) string {
-	const maxLen = 1024
-	if len(s) > maxLen {
-		s = s[:maxLen]
-	}
-	out := make([]rune, 0, len(s))
-	for _, r := range s {
-		if r == 0x7f || r < 0x20 {
-			out = append(out, '?')
-			continue
-		}
-		out = append(out, r)
-	}
-	return string(out)
-}
-
-// envAllowlist is the closed set of host-env variables propagated into
-// a plugin subprocess. Intentionally small — new variables must be
-// added here explicitly. Must never include DYLD_*, LD_*,
-// DYLD_INSERT_LIBRARIES, LD_PRELOAD, LD_LIBRARY_PATH, or any other
-// dynamic-loader injection channel; those classes of variables are
-// implicitly denied by not being in this list. L5: keep the allowlist
-// tight so a future contributor can't accidentally widen it.
-var envAllowlist = []string{"PATH", "HOME", "TMPDIR"}
-
-// sanitizedEnv builds a minimal environment for plugin subprocesses.
-// Leaks nothing beyond envAllowlist + MONBAN_PLUGIN_DIR so plugins can
-// locate their own payload files without inheriting host env.
-func sanitizedEnv(pluginDir string) []string {
-	env := []string{"MONBAN_PLUGIN_DIR=" + pluginDir}
-	for _, k := range envAllowlist {
-		if v := os.Getenv(k); v != "" {
-			env = append(env, k+"="+v)
-		}
-	}
-	return env
-}
-
-func randomID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-// Log-notify rate-limit parameters. Burst capacity tolerates chatty
-// startup lines; steady-state rate blocks sustained spam.
-const (
-	logBucketRatePerSec = 20.0
-	logBucketCapacity   = 100.0
-)
-
 // allowLogNotify reports whether this plugin is allowed to emit
 // another log-notify line right now. Leaky-bucket implementation:
 // tokens refill at logBucketRatePerSec up to logBucketCapacity;
@@ -877,57 +887,6 @@ func (p *Plugin) throttleAssertPin() error {
 	return nil
 }
 
-// assertLockedOut reports whether the cross-plugin lockout is active.
-// Once set, every plugin's auth.assert_with_pin is refused until the
-// user proves possession via the main-UI unlock path, which calls
-// NotifyUserUnlockSucceeded to clear the flag.
-func (h *Host) assertLockedOut() bool {
-	h.assertStateMu.Lock()
-	defer h.assertStateMu.Unlock()
-	return h.assertLocked
-}
-
-// recordAssertOutcome updates the global consecutive-failure counter
-// based on an auth.assert_with_pin outcome. ok=true resets the counter
-// (matches the YubiKey's own on-correct-PIN reset semantics). ok=false
-// increments; hitting assertFailureThreshold latches the lockout until
-// a user-initiated unlock clears it.
-func (h *Host) recordAssertOutcome(ok bool) {
-	h.assertStateMu.Lock()
-	defer h.assertStateMu.Unlock()
-	if ok {
-		h.assertFailures = 0
-		return
-	}
-	h.assertFailures++
-	if h.assertFailures >= assertFailureThreshold {
-		h.assertLocked = true
-		h.log.Printf("plugin: auth.assert_with_pin global lockout engaged after %d consecutive failures — user must unlock Monban to reset", h.assertFailures)
-	}
-}
-
-// NotifyUserUnlockSucceeded is called by the host-level App when the
-// user successfully unlocks Monban via the main UI. Clearing the
-// lockout here (rather than on plugin success) is deliberate: a
-// compromised plugin must not be able to reset its own kill-switch by
-// generating a successful assertion against stolen credentials.
-func (h *Host) NotifyUserUnlockSucceeded() {
-	h.assertStateMu.Lock()
-	defer h.assertStateMu.Unlock()
-	h.assertFailures = 0
-	h.assertLocked = false
-}
-
-// pinPromptMinInterval is the floor between any two request_pin_touch
-// prompts from the same plugin. Tight enough that legitimate multi-step
-// flows aren't annoying, loose enough to kill spam attempts.
-const pinPromptMinInterval = 5 * time.Second
-
-// pinPromptDuplicateCooldown is the extra cooldown when a plugin sends
-// a prompt with the same title+subtitle back-to-back — the exact shape
-// of a "train the user to click through" attack.
-const pinPromptDuplicateCooldown = 30 * time.Second
-
 // allowPinTouchPrompt enforces M3's rate-limit. Returns an error if the
 // prompt should be throttled (caller surfaces this to the plugin).
 func (p *Plugin) allowPinTouchPrompt(title, subtitle string) error {
@@ -947,6 +906,59 @@ func (p *Plugin) allowPinTouchPrompt(title, subtitle string) error {
 	p.pinPromptLastAt = now
 	p.pinPromptLastBody = title + "\x00" + subtitle
 	return nil
+}
+
+// --- Private package-level helpers ---
+
+// forwardStderr tags each line a plugin writes to stderr with a fixed
+// prefix that includes the plugin name, then strips non-printable bytes
+// + clips length before routing to the host logger. M5 fix: without
+// sanitisation a rogue plugin can emit crafted lines that masquerade
+// as host output in log analysers / SIEMs.
+func forwardStderr(r io.ReadCloser, name string, lg *log.Logger) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4096), 16*1024)
+	for scanner.Scan() {
+		lg.Printf("plugin[%s] stderr: %s", name, sanitizeStderrLine(scanner.Text()))
+	}
+}
+
+// sanitizeStderrLine strips control chars (incl. ANSI ESC, CR/NL) and
+// clips to 1 KB so a single stderr line can't blow up a log file or
+// render escape sequences into a tail -f'd terminal.
+func sanitizeStderrLine(s string) string {
+	const maxLen = 1024
+	if len(s) > maxLen {
+		s = s[:maxLen]
+	}
+	out := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r == 0x7f || r < 0x20 {
+			out = append(out, '?')
+			continue
+		}
+		out = append(out, r)
+	}
+	return string(out)
+}
+
+// sanitizedEnv builds a minimal environment for plugin subprocesses.
+// Leaks nothing beyond envAllowlist + MONBAN_PLUGIN_DIR so plugins can
+// locate their own payload files without inheriting host env.
+func sanitizedEnv(pluginDir string) []string {
+	env := []string{"MONBAN_PLUGIN_DIR=" + pluginDir}
+	for _, k := range envAllowlist {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
+func randomID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // sanitizePromptField strips characters that can misrepresent a

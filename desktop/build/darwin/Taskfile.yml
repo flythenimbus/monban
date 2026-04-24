@@ -129,6 +129,27 @@ tasks:
     cmds:
       - task: create:app:bundle
 
+  package:dev:
+    summary: Packages a production-tagged build with desktop/prod-release.pub baked in. Local testing only — CI uses `task package` with MONBAN_RELEASE_PUBKEY in the env.
+    preconditions:
+      - sh: '[ -f prod-release.pub ]'
+        msg: "desktop/prod-release.pub missing — generate with `./bin/monban-sign generate-key`"
+    deps:
+      - task: common:go:mod:tidy
+      - task: common:build:frontend
+      - task: common:generate:icons
+      - task: common:build:monban-sign
+    cmds:
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -X monban/internal/plugin.ReleasePubKeyHex=$(cat prod-release.pub)" -o {{.BIN_DIR}}/{{.APP_NAME}} .
+      - task: create:app:bundle
+    env:
+      GOOS: darwin
+      CGO_ENABLED: 1
+      GOARCH: '{{.ARCH | default ARCH}}'
+      CGO_CFLAGS: "-I/opt/homebrew/include -mmacosx-version-min=10.15"
+      CGO_LDFLAGS: "-L/opt/homebrew/lib -lfido2 -mmacosx-version-min=10.15"
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
+
   package:universal:
     summary: Packages darwin universal binary (arm64 + amd64) into a `.app` bundle
     deps:

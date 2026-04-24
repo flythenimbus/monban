@@ -222,40 +222,52 @@ export function PluginsTab() {
 					<h3 className="text-xs font-medium text-text-secondary uppercase tracking-wide">
 						Available
 					</h3>
-					{availableNotInstalled.map((a) => (
-						<div
-							key={a.name}
-							className="glass rounded-xl px-4 py-3 flex items-start justify-between gap-6"
-						>
-							<div className="min-w-0 flex-1">
-								<div className="flex items-center gap-2">
-									<span className="text-sm font-medium text-text">
-										{a.display_name || a.name}
-									</span>
-									<span className="text-xs text-text-secondary">
-										v{a.version}
-									</span>
-								</div>
-								{a.description && (
-									<div className="text-xs text-text-secondary mt-0.5 leading-relaxed">
-										{a.description}
+					{availableNotInstalled.map((a) => {
+						const isPending = pendingInstall?.name === a.name;
+						return (
+							<div
+								key={a.name}
+								className="glass rounded-xl divide-y divide-black/5 dark:divide-white/5"
+							>
+								<div className="px-4 py-3 flex items-start justify-between gap-6">
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-2">
+											<span className="text-sm font-medium text-text">
+												{a.display_name || a.name}
+											</span>
+											<span className="text-xs text-text-secondary">
+												v{a.version}
+											</span>
+										</div>
+										{a.description && (
+											<div className="text-xs text-text-secondary mt-0.5 leading-relaxed">
+												{a.description}
+											</div>
+										)}
 									</div>
+									<Button
+										size="sm"
+										onClick={() =>
+											setPendingInstall({
+												name: a.name,
+												displayName: a.display_name || a.name,
+											})
+										}
+										disabled={pendingInstall !== null || installing !== null}
+									>
+										{installing === a.name ? "Installing…" : "Install"}
+									</Button>
+								</div>
+								{isPending && (
+									<PinAuth
+										label={`Authenticate to install ${a.display_name || a.name}`}
+										onSubmit={confirmInstall}
+										onCancel={() => setPendingInstall(null)}
+									/>
 								)}
 							</div>
-							<Button
-								size="sm"
-								onClick={() =>
-									setPendingInstall({
-										name: a.name,
-										displayName: a.display_name || a.name,
-									})
-								}
-								disabled={pendingInstall !== null || installing !== null}
-							>
-								{installing === a.name ? "Installing…" : "Install"}
-							</Button>
-						</div>
-					))}
+						);
+					})}
 				</section>
 			)}
 
@@ -270,6 +282,7 @@ export function PluginsTab() {
 					label={`Authenticate to save ${pendingSave.displayName} settings`}
 					onSubmit={confirmSave}
 					onCancel={() => setPendingSave(null)}
+					topGap
 				/>
 			)}
 
@@ -278,14 +291,7 @@ export function PluginsTab() {
 					label={`Authenticate to uninstall ${pendingUninstall.displayName}`}
 					onSubmit={confirmUninstall}
 					onCancel={() => setPendingUninstall(null)}
-				/>
-			)}
-
-			{pendingInstall && (
-				<PinAuth
-					label={`Authenticate to install ${pendingInstall.displayName}`}
-					onSubmit={confirmInstall}
-					onCancel={() => setPendingInstall(null)}
+					topGap
 				/>
 			)}
 		</div>

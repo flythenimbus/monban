@@ -1,6 +1,7 @@
 import { Events } from "@wailsio/runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { Lock } from "./components/icons/Lock";
 import { AdminPanel } from "./screens/AdminPanel/AdminPanel";
 import {
 	type AuthorizeRequest,
@@ -166,15 +167,27 @@ function App() {
  */
 function SecondTouchOverlay({ pluginName }: { pluginName: string }) {
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-			<div className="max-w-md rounded-xl bg-card p-6 text-center shadow-xl">
-				<div className="mb-4 text-lg font-semibold">Authorize installer</div>
-				<div className="mb-2 text-sm text-text-secondary">
-					<strong>{pluginName}</strong> is about to run a system installer that
-					modifies files outside Monban.
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-6">
+			<div className="glass rounded-2xl max-w-sm w-full p-6 text-center">
+				<div className="flex justify-center mb-5">
+					<div className="relative">
+						<div className="absolute inset-0 rounded-full bg-accent/20 animate-ping" />
+						<div className="relative w-14 h-14 rounded-full bg-accent/15 text-accent flex items-center justify-center [&_svg]:size-6">
+							<Lock />
+						</div>
+					</div>
 				</div>
-				<div className="text-sm text-text-secondary">
-					Touch your security key to confirm.
+				<h2 className="text-base font-semibold text-text mb-2">
+					Authorize installer
+				</h2>
+				<p className="text-sm text-text-secondary leading-relaxed">
+					<strong className="text-text font-medium">{pluginName}</strong> is
+					about to run a system installer that modifies files outside Monban.
+				</p>
+				<div className="mt-5 pt-4 border-t border-black/5 dark:border-white/5">
+					<p className="text-xs text-accent animate-pulse motion-reduce:animate-none">
+						Touch your security key to confirm
+					</p>
 				</div>
 			</div>
 		</div>

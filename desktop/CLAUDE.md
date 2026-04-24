@@ -245,7 +245,78 @@ CGO_LDFLAGS="-lfido2"
 # Requires: libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
-## 13. Commands
+## 13. Code Hygiene Rules (Go)
+
+These rules apply to all Go files under `desktop/` and `plugins/`.
+
+### Layout: public on top, private at bottom
+Every Go file with both exported and unexported functions/methods must be
+organised as:
+
+```
+package foo
+
+import ( ... )
+
+// --- Types ---           (types, interfaces)
+// --- Constants ---       (const blocks)
+// --- Package vars ---    (package-level vars; optional)
+// --- Public functions ---
+//   (constructors, then exported funcs/methods in logical flow order)
+// --- Private methods ---
+//   (unexported methods on public types, in order of appearance in the public API)
+// --- Private package-level helpers ---
+//   (unexported free functions, small utilities)
+```
+
+Not every section header is required — omit the ones a file doesn't need —
+but the ordering (public above private) is mandatory. Tests and `init()`
+functions are exempt from ordering rules.
+
+### Prefer stdlib over bespoke helpers
+Before writing a small utility function, check whether the standard library
+already provides it. In particular:
+
+- `min` / `max` — built-in since Go 1.21 (don't write your own).
+- `clear(slice)` — built-in for zeroing slices/maps (see `monban.ZeroBytes`).
+- `slices.Contains` / `slices.Index` / `slices.Delete` — prefer over hand-rolled loops.
+- `maps.Keys` / `maps.Values` — prefer over manual iteration.
+- `bytes.Equal` / `hmac.Equal` / `subtle.ConstantTimeCompare` — never hand-roll
+  byte comparison (timing-safe comparison is mandatory for MACs/hashes).
+- `os.ReadFile` / `os.WriteFile` / `os.MkdirAll` — prefer over Open+Read+Close.
+- `strings.TrimSpace` / `strings.Cut` / `strings.HasPrefix` — prefer over
+  custom string manipulation.
+- `errors.Is` / `errors.As` — prefer over string comparison of error messages.
+
+Only write a helper if (a) no stdlib equivalent exists, (b) the stdlib form
+is materially less readable at every call site, or (c) there's a concrete
+reason to encapsulate the call (e.g. consistent error wrapping).
+
+### Extract repeated patterns
+If the same 5+ line block appears in 2+ places, extract it. Current shared
+helpers to look at before writing new ones:
+
+- `monban.hkdfKey(ikm, salt, info, label)` — every HKDF-SHA256 key
+  derivation goes through this.
+- `monban.randomBytes(n, label)` — all `crypto/rand`-backed random buffers.
+- `monban.parallelOp(items, fn)` — per-file concurrent work with
+  `runtime.NumCPU()` workers and first-error semantics. Both
+  `encryptFilesIncremental` and `decryptFilesInPlace` use this.
+- `monban.EncryptBytes` / `monban.DecryptBytes` — in-memory AES-256-GCM.
+  Don't re-open `crypto/aes` + `cipher.NewGCM` directly; use these.
+
+### Don't duplicate error-wrapping idioms
+`fmt.Errorf("X: %w", err)` is idiomatic and *not* considered duplication —
+leave it at each call site. Only extract when the surrounding logic (not
+just the wrap) repeats.
+
+### When not to extract
+Cryptographic sequences that are 3–5 lines (nonce gen + `gcm.Seal`) are
+kept inline deliberately — the intent is legible, and extraction adds
+indirection without clarity gain. Only extract when it removes real
+repetition (4+ sites) or encodes a non-obvious invariant.
+
+## 14. Commands
 
 ```bash
 # Generate Wails bindings (needed before frontend build)

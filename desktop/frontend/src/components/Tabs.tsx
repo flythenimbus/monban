@@ -1,4 +1,5 @@
 import { type ReactNode, useRef, useState } from "react";
+import { cn } from "../util/cn";
 
 interface TabItem {
 	key: string;
@@ -48,11 +49,12 @@ export function Tabs({ tabs, defaultTab }: TabsProps) {
 						role="tab"
 						aria-selected={t.key === active}
 						onClick={() => switchTab(t.key)}
-						className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+						className={cn(
+							"flex-1 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
 							t.key === active
 								? "bg-white/70 dark:bg-white/10 text-text shadow-sm"
-								: "text-text-secondary hover:text-text"
-						}`}
+								: "text-text-secondary hover:text-text",
+						)}
 					>
 						{t.label}
 					</button>

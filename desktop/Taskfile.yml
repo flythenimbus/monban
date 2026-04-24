@@ -55,6 +55,11 @@ tasks:
     cmds:
       - task: "{{OS}}:package"
 
+  package:dev:
+    summary: Packages a production-tagged build with desktop/prod-release.pub baked in (local testing)
+    cmds:
+      - task: "{{OS}}:package:dev"
+
   run:
     summary: Runs the application
     cmds:

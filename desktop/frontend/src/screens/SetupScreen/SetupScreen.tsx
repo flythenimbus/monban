@@ -10,6 +10,7 @@ import {
 } from "../../components";
 import { useAutoResize } from "../../hooks/useAutoResize";
 import type { SetupState } from "../../types";
+import { cn } from "../../util/cn";
 import { friendlyError } from "../../util/errors";
 
 interface Props {
@@ -80,7 +81,10 @@ export function SetupScreen({ onComplete }: Props) {
 					<div className="space-y-4">
 						<div
 							aria-live="polite"
-							className={`text-center text-sm ${deviceFound ? "text-accent font-medium" : "text-text-secondary"}`}
+							className={cn(
+								"text-center text-sm",
+								deviceFound ? "text-accent font-medium" : "text-text-secondary",
+							)}
 						>
 							{deviceFound
 								? "Security key detected"

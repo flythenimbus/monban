@@ -46,13 +46,6 @@ import (
 // isn't applicable and shouldn't annoy the user.
 var errSilent = errors.New("silent")
 
-// ttyPrint is a convenience wrapper around fmt.Fprintf for writing to
-// /dev/tty. We discard the return values deliberately: if the tty we
-// just opened has vanished mid-auth, there's nothing sensible to do.
-func ttyPrint(tty *os.File, format string, args ...any) {
-	_, _ = fmt.Fprintf(tty, format, args...)
-}
-
 func main() {
 	if err := run(); err != nil {
 		if errors.Is(err, errSilent) {
@@ -98,6 +91,13 @@ func run() error {
 	}
 
 	return assertFIDO2(tty, cfgPath, pin)
+}
+
+// ttyPrint is a convenience wrapper around fmt.Fprintf for writing to
+// /dev/tty. We discard the return values deliberately: if the tty we
+// just opened has vanished mid-auth, there's nothing sensible to do.
+func ttyPrint(tty *os.File, format string, args ...any) {
+	_, _ = fmt.Fprintf(tty, format, args...)
 }
 
 // maxPINBytes caps how much we accept from the TTY when reading a PIN.
