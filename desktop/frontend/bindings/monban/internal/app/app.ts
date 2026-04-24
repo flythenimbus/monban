@@ -7,10 +7,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise, Create as $Cr
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as json$0 from "../../../encoding/json/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as application$0 from "../../../github.com/wailsapp/wails/v3/pkg/application/models.js";
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as monban$0 from "../monban/models.js";
+import * as plugin$0 from "../plugin/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
@@ -24,10 +27,12 @@ export function AddPath(path: string, pin: string): $CancellablePromise<void> {
 }
 
 /**
- * CancelIPCAuth is called when the user dismisses the IPC auth dialog.
+ * CancelPluginPinTouch is called when the user dismisses a plugin PIN
+ * prompt. Signals the waiting goroutine so the plugin gets a cancel
+ * response promptly.
  */
-export function CancelIPCAuth(): $CancellablePromise<void> {
-    return $Call.ByID(4237968635);
+export function CancelPluginPinTouch(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1354670432, id);
 }
 
 /**
@@ -72,15 +77,35 @@ export function ExitFullscreen(): $CancellablePromise<void> {
 }
 
 /**
- * GetPendingIPCAuth returns a snapshot of the current in-flight IPC auth
- * request, or nil if none is active. Called by the frontend on mount to
- * handle the cold-start case where the plugin connected before Events.On
- * subscribed to ipc:auth-request.
+ * FirePluginEvent dispatches a lifecycle notify to subscribed plugins.
+ * P1 only emits on:app_started and on:app_shutdown.
  */
-export function GetPendingIPCAuth(): $CancellablePromise<monban$0.IPCRequest | null> {
-    return $Call.ByID(163305684).then(($result: any) => {
+export function FirePluginEvent(event: string, payload: any): $CancellablePromise<void> {
+    return $Call.ByID(1165557056, event, payload);
+}
+
+/**
+ * GetPendingPluginPinTouch returns the oldest outstanding pin-touch
+ * request, or nil if none is pending. Called by the frontend on mount
+ * to cover the cold-start case where Monban was launched by the
+ * SecurityAgent bundle (open -a Monban) because of an admin-gate
+ * prompt — the plugin:pin-touch-request event fires before React
+ * subscribes, so without this poll the dialog would never appear.
+ */
+export function GetPendingPluginPinTouch(): $CancellablePromise<$models.PluginPinTouchRequest | null> {
+    return $Call.ByID(1021084325).then(($result: any) => {
         return $$createType3($result);
     });
+}
+
+/**
+ * GetPluginSettings returns the persisted settings blob for the named
+ * plugin, or nil if none exist. The returned bytes are the opaque JSON
+ * body the plugin authored — the frontend auto-renders against the
+ * manifest's settings schema.
+ */
+export function GetPluginSettings(name: string): $CancellablePromise<json$0.RawMessage> {
+    return $Call.ByID(239319667, name);
 }
 
 /**
@@ -106,18 +131,24 @@ export function GetVersion(): $CancellablePromise<string> {
 }
 
 /**
- * HandleIPCAuth is called by the frontend after the user enters their PIN.
+ * HideWindow hides Monban's window and drops it from the Dock. Used
+ * after a plugin-initiated authorization completes — the user wasn't
+ * actively using Monban's UI, they just needed to authenticate, so
+ * we should get out of their way. They can bring Monban back via the
+ * system-tray menu.
  */
-export function HandleIPCAuth(pin: string): $CancellablePromise<void> {
-    return $Call.ByID(1932996403, pin);
+export function HideWindow(): $CancellablePromise<void> {
+    return $Call.ByID(2457366743);
 }
 
 /**
- * HideToTray hides the window back to the system tray.
- * If the app is locked with force auth, re-enters fullscreen instead.
+ * InstallPlugin downloads the named plugin from the embedded catalog,
+ * verifies its signatures, extracts the tarball into the plugins dir,
+ * and loads it. Requires FIDO2 re-auth — installing a plugin adds
+ * HMAC-covered state to the secure config.
  */
-export function HideToTray(): $CancellablePromise<void> {
-    return $Call.ByID(4144683102);
+export function InstallPlugin(name: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2470285849, name, pin);
 }
 
 export function IsLocked(): $CancellablePromise<boolean> {
@@ -129,11 +160,30 @@ export function IsRegistered(): $CancellablePromise<boolean> {
 }
 
 /**
+ * ListAvailablePlugins returns every plugin in the embedded catalog that
+ * can run on this platform, with installed-status resolved.
+ */
+export function ListAvailablePlugins(): $CancellablePromise<$models.AvailablePlugin[]> {
+    return $Call.ByID(90493822).then(($result: any) => {
+        return $$createType7($result);
+    });
+}
+
+/**
  * ListKeys returns information about registered security keys.
  */
 export function ListKeys(): $CancellablePromise<$models.KeyInfo[]> {
     return $Call.ByID(257323087).then(($result: any) => {
-        return $$createType7($result);
+        return $$createType9($result);
+    });
+}
+
+/**
+ * ListPlugins returns the current set of loaded plugins for the admin UI.
+ */
+export function ListPlugins(): $CancellablePromise<plugin$0.PluginStatus[]> {
+    return $Call.ByID(3885862709).then(($result: any) => {
+        return $$createType11($result);
     });
 }
 
@@ -184,6 +234,15 @@ export function ResizeWindow(width: number, height: number): $CancellablePromise
 }
 
 /**
+ * RespondPluginPinTouch is called by the frontend when the user submits
+ * a PIN for a plugin-initiated request. Performs a FIDO2 assertion with
+ * the given PIN and signals the waiting goroutine.
+ */
+export function RespondPluginPinTouch(id: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2131184713, id, pin);
+}
+
+/**
  * RevealSecureConfig opens the system file manager to the secure config directory.
  */
 export function RevealSecureConfig(): $CancellablePromise<void> {
@@ -195,6 +254,14 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
 }
 
 /**
+ * ShutdownPluginHost notifies every loaded plugin that the app is exiting,
+ * then terminates each subprocess with a grace period.
+ */
+export function ShutdownPluginHost(): $CancellablePromise<void> {
+    return $Call.ByID(3910072988);
+}
+
+/**
  * StartDeviceWatcher polls for security key presence and counter file integrity,
  * locking vaults if either the key is removed or the counter file is deleted.
  */
@@ -203,17 +270,22 @@ export function StartDeviceWatcher(): $CancellablePromise<void> {
 }
 
 /**
- * StartIPCListener begins listening for IPC auth requests on a Unix socket.
+ * StartPluginHost loads every installed plugin from the plugins directory,
+ * verifies signatures, spawns subprocesses, and performs the hello
+ * handshake. Call early in main() so plugins are ready before the first
+ * lifecycle event fires.
  */
-export function StartIPCListener(): $CancellablePromise<void> {
-    return $Call.ByID(1691723153);
+export function StartPluginHost(): $CancellablePromise<void> {
+    return $Call.ByID(4123584460);
 }
 
 /**
- * StopIPCListener shuts down the IPC listener and cleans up the socket.
+ * UninstallPlugin terminates the plugin subprocess, removes its directory
+ * from ~/.config/monban/plugins/, and clears its settings from
+ * SecureConfig. Requires FIDO2 re-auth.
  */
-export function StopIPCListener(): $CancellablePromise<void> {
-    return $Call.ByID(1432751);
+export function UninstallPlugin(name: string, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2821468544, name, pin);
 }
 
 /**
@@ -221,6 +293,15 @@ export function StopIPCListener(): $CancellablePromise<void> {
  */
 export function Unlock(pin: string): $CancellablePromise<void> {
     return $Call.ByID(1703829999, pin);
+}
+
+/**
+ * UpdatePluginSettings persists a new settings blob for the named plugin
+ * and calls settings.apply on the running subprocess so it can validate
+ * + react. Requires FIDO2 re-auth — plugin settings are HMAC-covered.
+ */
+export function UpdatePluginSettings(name: string, settings: json$0.RawMessage, pin: string): $CancellablePromise<void> {
+    return $Call.ByID(2390545420, name, settings, pin);
 }
 
 /**
@@ -245,9 +326,13 @@ export function UpdateVaultMode(path: string, mode: string, pin: string): $Cance
 // Private type creation functions
 const $$createType0 = $models.DiskSpaceInfo.createFrom;
 const $$createType1 = $models.UpdateInfo.createFrom;
-const $$createType2 = monban$0.IPCRequest.createFrom;
+const $$createType2 = $models.PluginPinTouchRequest.createFrom;
 const $$createType3 = $Create.Nullable($$createType2);
 const $$createType4 = $models.CombinedSettings.createFrom;
 const $$createType5 = $models.AppStatus.createFrom;
-const $$createType6 = $models.KeyInfo.createFrom;
+const $$createType6 = $models.AvailablePlugin.createFrom;
 const $$createType7 = $Create.Array($$createType6);
+const $$createType8 = $models.KeyInfo.createFrom;
+const $$createType9 = $Create.Array($$createType8);
+const $$createType10 = plugin$0.PluginStatus.createFrom;
+const $$createType11 = $Create.Array($$createType10);

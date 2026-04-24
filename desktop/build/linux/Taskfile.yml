@@ -49,6 +49,7 @@ tasks:
             ref: .DEV
       - task: common:generate:icons
       - task: generate:dotdesktop
+      - task: common:build:monban-sign
     cmds:
       - go build {{.BUILD_FLAGS}} -o {{.OUTPUT}}
     vars:

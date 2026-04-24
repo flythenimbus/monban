@@ -143,6 +143,7 @@ export function GeneralTab() {
 						label="Authenticate to add this path"
 						onSubmit={handleAddWithPin}
 						onCancel={() => setAddPending(false)}
+						topGap
 					/>
 				)}
 			</div>

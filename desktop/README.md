@@ -31,7 +31,7 @@ task dev
 ## Build
 
 ```bash
-task package        # macOS: builds Monban.app + Monban-<version>.pkg
+task package        # macOS: builds Monban.app
 task linux:package  # Linux: deb/rpm/AppImage
 ```
 
@@ -45,25 +45,18 @@ task test
 
 ### macOS
 
-Install the `.pkg` from `bin/`:
+Move `Monban.app` from `bin/` (or the release zip) to `/Applications`:
 
 ```bash
-sudo installer -pkg bin/Monban-*.pkg -target /
+mv bin/Monban.app /Applications/
 ```
 
-Installing the pkg **immediately gates `sudo` and native admin authorization
-dialogs** (System Settings, Installer, etc.) behind your registered YubiKey.
-There is no runtime toggle — installing is the opt-in; uninstalling is the
-opt-out. Original `authorizationdb` rights are backed up to
-`/Library/Security/SecurityAgentPlugins/*.monban-backup` so uninstall can
-restore them.
-
-After install, run `desktop/scripts/test_install.sh` to verify the pkg placed
-everything correctly.
+Monban installs its own LaunchAgent on first run.
 
 ### Linux
 
-Install the `.deb` or `.rpm` from `bin/`, or run the AppImage directly. Auto-start is managed via Settings. Note: Linux admin_gate UX is currently unavailable — tracked as a separate phase.
+Install the `.deb` or `.rpm` from `bin/`, or run the AppImage directly.
+Auto-start is managed via Settings.
 
 ## Uninstall
 
@@ -71,26 +64,8 @@ Unlock and remove all protected items first, then:
 
 **macOS:**
 ```bash
-# Stop the app and forget the pkg registration.
 pkill -x Monban 2>/dev/null || true
-sudo pkgutil --forget com.monban.pkg
-
-# Restore every authorizationdb right we rebound.
-for backup in /Library/Security/SecurityAgentPlugins/*.monban-backup; do
-    [ -f "$backup" ] || continue
-    right=$(basename "$backup" .monban-backup)
-    sudo security authorizationdb write "$right" < "$backup"
-    sudo rm -f "$backup"
-done
-
-# Remove installed system files.
-sudo rm -f /etc/pam.d/sudo_local \
-          /usr/local/bin/monban-pam-helper \
-          /usr/local/lib/pam/pam_monban.so
-sudo rm -rf /Library/Security/SecurityAgentPlugins/monban-auth.bundle
 sudo rm -rf /Applications/Monban.app
-
-# Remove autostart + user config.
 launchctl unload ~/Library/LaunchAgents/com.monban.agent.plist 2>/dev/null || true
 rm -f ~/Library/LaunchAgents/com.monban.agent.plist
 rm -rf ~/.config/monban
@@ -101,4 +76,3 @@ rm -rf ~/.config/monban
 rm ~/.config/autostart/monban.desktop
 rm -rf ~/.config/monban
 ```
-

@@ -1,0 +1,20 @@
+{
+  "name": "admin-gate",
+  "display_name": "Admin Gate",
+  "version": "0.1.0",
+  "monban_api": "0.1",
+  "description": "Gate sudo and macOS admin dialogs behind your security key.",
+  "platforms": ["darwin-arm64"],
+  "kind": ["system"],
+  "hooks": ["on:app_started", "on:app_shutdown"],
+  "binary": {
+    "darwin-arm64": "bin/admin-gate"
+  },
+  "install_pkg": "admin-gate-installer-0.1.0.pkg",
+  "capabilities": [
+    "system_paths:/etc/pam.d",
+    "system_paths:/Library/Security/SecurityAgentPlugins",
+    "pkg_postinstall",
+    "fido2_assert_with_pin"
+  ]
+}

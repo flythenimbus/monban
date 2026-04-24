@@ -39,6 +39,47 @@ export class AppStatus {
 }
 
 /**
+ * AvailablePlugin is a catalog entry filtered for the running platform,
+ * augmented with a flag telling the UI whether it's already installed.
+ */
+export class AvailablePlugin {
+    "name": string;
+    "display_name": string;
+    "version": string;
+    "description": string;
+    "installed": boolean;
+
+    /** Creates a new AvailablePlugin instance. */
+    constructor($$source: Partial<AvailablePlugin> = {}) {
+        if (!("name" in $$source)) {
+            this["name"] = "";
+        }
+        if (!("display_name" in $$source)) {
+            this["display_name"] = "";
+        }
+        if (!("version" in $$source)) {
+            this["version"] = "";
+        }
+        if (!("description" in $$source)) {
+            this["description"] = "";
+        }
+        if (!("installed" in $$source)) {
+            this["installed"] = false;
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new AvailablePlugin instance from a string or object.
+     */
+    static createFrom($$source: any = {}): AvailablePlugin {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new AvailablePlugin($$parsedSource as Partial<AvailablePlugin>);
+    }
+}
+
+/**
  * CombinedSettings is the frontend-facing settings object.
  * All fields are stored in the HMAC-signed secure config.
  */
@@ -118,6 +159,40 @@ export class KeyInfo {
     static createFrom($$source: any = {}): KeyInfo {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new KeyInfo($$parsedSource as Partial<KeyInfo>);
+    }
+}
+
+/**
+ * PluginPinTouchRequest is emitted to the frontend when a plugin asks
+ * the host to prompt for PIN + touch. The frontend shows a PinAuth
+ * dialog and responds via RespondPluginPinTouch(id, pin).
+ */
+export class PluginPinTouchRequest {
+    "id": string;
+    "title": string;
+    "subtitle": string;
+
+    /** Creates a new PluginPinTouchRequest instance. */
+    constructor($$source: Partial<PluginPinTouchRequest> = {}) {
+        if (!("id" in $$source)) {
+            this["id"] = "";
+        }
+        if (!("title" in $$source)) {
+            this["title"] = "";
+        }
+        if (!("subtitle" in $$source)) {
+            this["subtitle"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new PluginPinTouchRequest instance from a string or object.
+     */
+    static createFrom($$source: any = {}): PluginPinTouchRequest {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new PluginPinTouchRequest($$parsedSource as Partial<PluginPinTouchRequest>);
     }
 }
 

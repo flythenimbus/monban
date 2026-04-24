@@ -1,8 +1,10 @@
 import * as App from "../bindings/monban/internal/app/app";
 import type {
 	AppStatus,
+	AvailablePlugin,
 	DiskSpaceInfo,
 	KeyInfo,
+	PluginStatus,
 	Settings,
 	UpdateInfo,
 } from "./types";
@@ -57,22 +59,66 @@ export const api = {
 			pin,
 		),
 
-	handleIPCAuth: (pin: string): Promise<void> => App.HandleIPCAuth(pin),
-
-	cancelIPCAuth: (): Promise<void> => App.CancelIPCAuth(),
-
-	getPendingIPCAuth: (): Promise<{ user: string; service: string } | null> =>
-		App.GetPendingIPCAuth() as unknown as Promise<{
-			user: string;
-			service: string;
-		} | null>,
-
-	hideToTray: (): Promise<void> => App.HideToTray(),
-
 	revealSecureConfig: (): Promise<void> => App.RevealSecureConfig(),
 
 	getVersion: (): Promise<string> => App.GetVersion(),
 
 	checkForUpdate: (): Promise<UpdateInfo> =>
 		App.CheckForUpdate() as unknown as Promise<UpdateInfo>,
+
+	listPlugins: (): Promise<PluginStatus[]> =>
+		App.ListPlugins() as unknown as Promise<PluginStatus[]>,
+
+	getPluginSettings: async (name: string): Promise<Record<string, unknown>> => {
+		const raw = (await App.GetPluginSettings(name)) as unknown;
+		if (raw === null || raw === undefined) return {};
+		if (typeof raw === "object") return raw as Record<string, unknown>;
+		if (typeof raw === "string") {
+			try {
+				return JSON.parse(raw) as Record<string, unknown>;
+			} catch {
+				return {};
+			}
+		}
+		return {};
+	},
+
+	updatePluginSettings: (
+		name: string,
+		settings: Record<string, unknown>,
+		pin: string,
+	): Promise<void> =>
+		App.UpdatePluginSettings(
+			name,
+			settings as unknown as Parameters<typeof App.UpdatePluginSettings>[1],
+			pin,
+		),
+
+	uninstallPlugin: (name: string, pin: string): Promise<void> =>
+		App.UninstallPlugin(name, pin),
+
+	listAvailablePlugins: (): Promise<AvailablePlugin[]> =>
+		App.ListAvailablePlugins() as unknown as Promise<AvailablePlugin[]>,
+
+	installPlugin: (name: string, pin: string): Promise<void> =>
+		App.InstallPlugin(name, pin),
+
+	respondPluginPinTouch: (id: string, pin: string): Promise<void> =>
+		App.RespondPluginPinTouch(id, pin),
+
+	cancelPluginPinTouch: (id: string): Promise<void> =>
+		App.CancelPluginPinTouch(id),
+
+	getPendingPluginPinTouch: (): Promise<{
+		id: string;
+		title: string;
+		subtitle: string;
+	} | null> =>
+		App.GetPendingPluginPinTouch() as unknown as Promise<{
+			id: string;
+			title: string;
+			subtitle: string;
+		} | null>,
+
+	hideWindow: (): Promise<void> => App.HideWindow(),
 };

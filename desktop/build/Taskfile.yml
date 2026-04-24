@@ -7,19 +7,20 @@ tasks:
     cmds:
       - go mod tidy
 
-  build:pam-helper:
-    summary: Builds the PAM helper binary and PAM module
+  build:monban-sign:
+    summary: Builds the monban-sign CLI (ed25519 plugin artefact signer)
+    desc: |
+      Produces {{.BIN_DIR}}/monban-sign — the standalone tool used by
+      plugins/<name>/build.sh to sign manifests and tarballs against
+      Monban's trusted release key. Built for the host arch
+      (no CGo, no cross-compile) so it Just Works on any dev machine
+      or CI runner.
+    sources:
+      - cmd/monban-sign/*.go
+    generates:
+      - "{{.BIN_DIR}}/monban-sign"
     cmds:
-      - go build -trimpath -ldflags="-w -s" -o {{.BIN_DIR}}/monban-pam-helper ./cmd/pam-helper/
-      - cc -shared -o {{.BIN_DIR}}/pam_monban.so cmd/pam-module/pam_monban.c -lpam
-
-  build:auth-plugin:
-    summary: Builds the macOS Authorization Plugin bundle
-    platforms: [darwin]
-    cmds:
-      - mkdir -p {{.BIN_DIR}}/monban-auth.bundle/Contents/MacOS
-      - cc -bundle -o {{.BIN_DIR}}/monban-auth.bundle/Contents/MacOS/monban-auth cmd/auth-plugin/monban_auth_plugin.m -framework Foundation -framework Security -framework SystemConfiguration
-      - cp cmd/auth-plugin/Info.plist {{.BIN_DIR}}/monban-auth.bundle/Contents/
+      - go build -trimpath -ldflags="-w -s" -o {{.BIN_DIR}}/monban-sign ./cmd/monban-sign/
 
   install:frontend:deps:
     summary: Install frontend dependencies

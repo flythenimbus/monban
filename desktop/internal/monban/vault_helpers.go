@@ -222,52 +222,32 @@ func fileUnchanged(fi fileInfo, prev ManifestEntry) bool {
 // reuse their existing .enc from the previous lock.
 func encryptFilesIncremental(encKey []byte, files []fileInfo, folderPath string, prev map[string]ManifestEntry) (*Manifest, error) {
 	manifest := &Manifest{Version: 1, Files: make([]ManifestEntry, len(files))}
-	var encErr atomic.Value
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, runtime.NumCPU())
+	err := parallelOp(files, func(idx int, fi fileInfo) error {
+		encName := hashedEncName(fi.relPath)
 
-	for i, f := range files {
-		wg.Add(1)
-		go func(idx int, fi fileInfo) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			if encErr.Load() != nil {
-				return
+		if prev != nil {
+			if prevEntry, ok := prev[fi.relPath]; ok && fileUnchanged(fi, prevEntry) {
+				manifest.Files[idx] = prevEntry
+				return nil
 			}
+		}
 
-			encName := hashedEncName(fi.relPath)
+		encPath := filepath.Join(dataDir(folderPath), encName)
+		if err := EncryptFile(encKey, fi.absPath, encPath); err != nil {
+			return fmt.Errorf("encrypting %s: %w", fi.relPath, err)
+		}
 
-			// Check if file is unchanged from previous lock
-			if prev != nil {
-				if prevEntry, ok := prev[fi.relPath]; ok && fileUnchanged(fi, prevEntry) {
-					// Reuse existing .enc — no need to re-encrypt
-					manifest.Files[idx] = prevEntry
-					return
-				}
-			}
-
-			encPath := filepath.Join(dataDir(folderPath), encName)
-
-			if err := EncryptFile(encKey, fi.absPath, encPath); err != nil {
-				encErr.Store(fmt.Errorf("encrypting %s: %w", fi.relPath, err))
-				return
-			}
-
-			manifest.Files[idx] = ManifestEntry{
-				Path:    fi.relPath,
-				EncName: encName,
-				Size:    fi.size,
-				Mode:    fi.mode,
-				ModTime: fi.modTime,
-			}
-		}(i, f)
-	}
-	wg.Wait()
-
-	if v := encErr.Load(); v != nil {
-		return nil, v.(error)
+		manifest.Files[idx] = ManifestEntry{
+			Path:    fi.relPath,
+			EncName: encName,
+			Size:    fi.size,
+			Mode:    fi.mode,
+			ModTime: fi.modTime,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return manifest, nil
 }
@@ -294,7 +274,6 @@ func cleanupStaleEncFiles(current *Manifest, prev map[string]ManifestEntry, fold
 // decryptFilesInPlace decrypts files from .monban-data/ back to their original paths.
 // Manifest paths are validated to prevent path traversal attacks.
 func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) error {
-	// Pre-validate all manifest paths before any decryption
 	cleanRoot := filepath.Clean(folderPath)
 	for _, e := range manifest.Files {
 		if err := validateManifestPath(e.Path, cleanRoot); err != nil {
@@ -302,41 +281,50 @@ func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) e
 		}
 	}
 
-	var decErr atomic.Value
+	return parallelOp(manifest.Files, func(_ int, e ManifestEntry) error {
+		encPath := filepath.Join(dataDir(folderPath), e.EncName)
+		dstPath := filepath.Join(cleanRoot, e.Path)
+
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0700); err != nil {
+			return fmt.Errorf("creating dir for %s: %w", e.Path, err)
+		}
+		if err := DecryptFile(encKey, encPath, dstPath); err != nil {
+			return fmt.Errorf("decrypting %s: %w", e.Path, err)
+		}
+
+		_ = os.Chmod(dstPath, e.Mode)
+		_ = os.Chtimes(dstPath, e.ModTime, e.ModTime)
+		return nil
+	})
+}
+
+// parallelOp runs fn over items concurrently with up to runtime.NumCPU() workers.
+// Returns the first error encountered; in-flight workers skip their work once
+// an error is recorded. Parallelism only (no ordering guarantees), though fn
+// receives the original slice index.
+func parallelOp[T any](items []T, fn func(idx int, item T) error) error {
+	var firstErr atomic.Value
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
 
-	for _, entry := range manifest.Files {
+	for i, it := range items {
 		wg.Add(1)
-		go func(e ManifestEntry) {
+		go func(idx int, item T) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if decErr.Load() != nil {
+			if firstErr.Load() != nil {
 				return
 			}
-
-			encPath := filepath.Join(dataDir(folderPath), e.EncName)
-			dstPath := filepath.Join(cleanRoot, e.Path)
-
-			if err := os.MkdirAll(filepath.Dir(dstPath), 0700); err != nil {
-				decErr.Store(fmt.Errorf("creating dir for %s: %w", e.Path, err))
-				return
+			if err := fn(idx, item); err != nil {
+				firstErr.Store(err)
 			}
-
-			if err := DecryptFile(encKey, encPath, dstPath); err != nil {
-				decErr.Store(fmt.Errorf("decrypting %s: %w", e.Path, err))
-				return
-			}
-
-			_ = os.Chmod(dstPath, e.Mode)
-			_ = os.Chtimes(dstPath, e.ModTime, e.ModTime)
-		}(entry)
+		}(i, it)
 	}
 	wg.Wait()
 
-	if v := decErr.Load(); v != nil {
+	if v := firstErr.Load(); v != nil {
 		return v.(error)
 	}
 	return nil

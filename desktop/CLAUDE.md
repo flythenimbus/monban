@@ -205,62 +205,6 @@ Every config write requires a fresh FIDO2 assertion (PIN + physical touch):
 settings changes, vault add/remove, key add/remove, decrypt mode changes.
 No mutation uses the in-memory master secret alone.
 
-## 9a. Admin Gate (PAM + authorizationdb integration)
-
-Installing Monban's `.pkg` on macOS gates both `sudo` and native admin
-authorization dialogs (System Settings, Installer, etc.) behind a YubiKey
-FIDO2 assertion. There is no runtime on/off/default/strict toggle — the gate
-is configured once at pkg install time and removed by uninstalling. See
-`plans/macos_install.md` Phase 2.5 for why (macOS Tahoe blocks unsigned root
-daemons from writing `/etc/pam.d/`, so config is placed via Installer.app's
-postinstall context once at install).
-
-### What gets configured at pkg install time
-
-Two independent subsystems, both placed by `build/darwin/pkg/scripts/postinstall`:
-
-- **sudo:** `/etc/pam.d/sudo_local` is written with
-  `auth sufficient /usr/local/lib/pam/pam_monban.so # monban sudo gate`.
-  Monban's PAM module forks `monban-pam-helper` which authenticates via FIDO2;
-  success grants sudo, failure falls through to the normal password prompt.
-- **admin authorization dialogs:** the `system.preferences` and
-  `system.preferences.security` rights in `authorizationdb` are rebound to
-  `class: evaluate-mechanisms` pointing at `monban-auth:auth` (the bundled
-  SecurityAgent plugin). Original rights are backed up to
-  `/Library/Security/SecurityAgentPlugins/<right>.monban-backup`.
-
-### IPC for GUI contexts
-
-- The PAM helper tries `/dev/tty` first (terminal sudo). If no TTY is
-  available (e.g. a GUI authorization dialog), it connects to the running
-  Monban app via a Unix socket at `~/.config/monban/monban.sock`.
-- The app shows a PIN dialog overlay, performs the FIDO2 assertion, and
-  returns success/failure to the helper over the socket.
-- If the app is not running, the helper launches it via `open -a Monban`
-  and retries the connection.
-
-### Components
-
-- `cmd/pam-helper/` — standalone binary invoked by PAM. Reads secure config,
-  prompts for PIN via `/dev/tty` or IPC, performs FIDO2 assertion + signature
-  verification. Its `--install` / `--uninstall` subcommands still exist for
-  Linux; macOS uses the pkg postinstall path instead.
-- `cmd/pam-module/pam_monban.c` — thin PAM module (`pam_monban.so`) that
-  execs `/usr/local/bin/monban-pam-helper` and maps its exit status to
-  `PAM_SUCCESS` / `PAM_AUTH_ERR`.
-- `cmd/auth-plugin/` — SecurityAgent plugin bundle invoked by the
-  authorizationdb rebind.
-- `internal/monban/ipc.go` / `ipc.go` — IPC protocol and user-side listener.
-- `internal/monban/pam.go` / `pam_darwin.go` / `pam_linux.go` — shared PAM
-  path helpers (`PamSudoPath`, `PamSuPath`, `PamLine`, `PamHelperPath`).
-
-### Disabling
-
-Uninstall the pkg. `pkgutil --forget com.monban.pkg` + manual removal of
-`/etc/pam.d/sudo_local`, restore of authorizationdb rights from the
-`.monban-backup` files, and deletion of the installed binaries + bundle.
-A future release will ship a proper uninstaller script.
-
 ## 10. Vault Types
 
 ### Folder vaults (default)
@@ -301,7 +245,78 @@ CGO_LDFLAGS="-lfido2"
 # Requires: libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 ```
 
-## 13. Commands
+## 13. Code Hygiene Rules (Go)
+
+These rules apply to all Go files under `desktop/` and `plugins/`.
+
+### Layout: public on top, private at bottom
+Every Go file with both exported and unexported functions/methods must be
+organised as:
+
+```
+package foo
+
+import ( ... )
+
+// --- Types ---           (types, interfaces)
+// --- Constants ---       (const blocks)
+// --- Package vars ---    (package-level vars; optional)
+// --- Public functions ---
+//   (constructors, then exported funcs/methods in logical flow order)
+// --- Private methods ---
+//   (unexported methods on public types, in order of appearance in the public API)
+// --- Private package-level helpers ---
+//   (unexported free functions, small utilities)
+```
+
+Not every section header is required — omit the ones a file doesn't need —
+but the ordering (public above private) is mandatory. Tests and `init()`
+functions are exempt from ordering rules.
+
+### Prefer stdlib over bespoke helpers
+Before writing a small utility function, check whether the standard library
+already provides it. In particular:
+
+- `min` / `max` — built-in since Go 1.21 (don't write your own).
+- `clear(slice)` — built-in for zeroing slices/maps (see `monban.ZeroBytes`).
+- `slices.Contains` / `slices.Index` / `slices.Delete` — prefer over hand-rolled loops.
+- `maps.Keys` / `maps.Values` — prefer over manual iteration.
+- `bytes.Equal` / `hmac.Equal` / `subtle.ConstantTimeCompare` — never hand-roll
+  byte comparison (timing-safe comparison is mandatory for MACs/hashes).
+- `os.ReadFile` / `os.WriteFile` / `os.MkdirAll` — prefer over Open+Read+Close.
+- `strings.TrimSpace` / `strings.Cut` / `strings.HasPrefix` — prefer over
+  custom string manipulation.
+- `errors.Is` / `errors.As` — prefer over string comparison of error messages.
+
+Only write a helper if (a) no stdlib equivalent exists, (b) the stdlib form
+is materially less readable at every call site, or (c) there's a concrete
+reason to encapsulate the call (e.g. consistent error wrapping).
+
+### Extract repeated patterns
+If the same 5+ line block appears in 2+ places, extract it. Current shared
+helpers to look at before writing new ones:
+
+- `monban.hkdfKey(ikm, salt, info, label)` — every HKDF-SHA256 key
+  derivation goes through this.
+- `monban.randomBytes(n, label)` — all `crypto/rand`-backed random buffers.
+- `monban.parallelOp(items, fn)` — per-file concurrent work with
+  `runtime.NumCPU()` workers and first-error semantics. Both
+  `encryptFilesIncremental` and `decryptFilesInPlace` use this.
+- `monban.EncryptBytes` / `monban.DecryptBytes` — in-memory AES-256-GCM.
+  Don't re-open `crypto/aes` + `cipher.NewGCM` directly; use these.
+
+### Don't duplicate error-wrapping idioms
+`fmt.Errorf("X: %w", err)` is idiomatic and *not* considered duplication —
+leave it at each call site. Only extract when the surrounding logic (not
+just the wrap) repeats.
+
+### When not to extract
+Cryptographic sequences that are 3–5 lines (nonce gen + `gcm.Seal`) are
+kept inline deliberately — the intent is legible, and extraction adds
+indirection without clarity gain. Only extract when it removes real
+repetition (4+ sites) or encodes a non-obvious invariant.
+
+## 14. Commands
 
 ```bash
 # Generate Wails bindings (needed before frontend build)

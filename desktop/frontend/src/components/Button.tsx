@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes } from "react";
+import { cn } from "../util/cn";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 	variant?: "primary" | "secondary" | "danger";
@@ -10,19 +11,19 @@ export function Button({
 	variant = "primary",
 	size = "default",
 	fullWidth = true,
-	className = "",
+	className,
 	type = "button",
 	...props
 }: ButtonProps) {
-	const base = `btn-${variant}`;
-	const sizeClass =
-		size === "sm" ? "w-auto! px-2.5 py-1.5 !text-xs !rounded-md" : "";
-	const widthClass = !fullWidth && size !== "sm" ? "w-auto!" : "";
-
 	return (
 		<button
 			type={type}
-			className={`${base} ${sizeClass} ${widthClass} ${className}`.trim()}
+			className={cn(
+				`btn-${variant}`,
+				size === "sm" && "w-auto! px-2.5 py-1.5 !text-xs !rounded-md",
+				!fullWidth && size !== "sm" && "w-auto!",
+				className,
+			)}
 			{...props}
 		/>
 	);

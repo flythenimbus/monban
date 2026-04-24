@@ -1,4 +1,4 @@
-name: Release
+name: app release
 
 on:
   push:
@@ -56,39 +56,28 @@ jobs:
           version: "~> v2"
           args: build --clean -f .goreleaser-darwin.yml
           workdir: desktop
+        env:
+          MONBAN_RELEASE_PUBKEY: ${{ secrets.MONBAN_PLUGIN_SIGNING_PUBKEY }}
 
       - name: Package .app bundle
         working-directory: desktop
         run: |
-          VERSION=${GITHUB_REF_NAME}
-
           # Copy universal binary to bin/ where task expects it
           BINARY=$(find dist -name "Monban" -type f | head -1)
           mkdir -p bin
           cp "$BINARY" bin/Monban
 
-          # Use task to build PAM helper + module and create .app bundle
           task darwin:create:app:bundle
 
           # Zip the .app
           mkdir -p release
           cd bin && zip -ry "../release/monban_macos_universal.zip" Monban.app
 
-      - name: Build .pkg installer
-        working-directory: desktop
-        run: |
-          # Strip leading "v" from tag to produce Monban-0.1.0.pkg style filename.
-          VERSION=${GITHUB_REF_NAME#v}
-          task darwin:pkg VERSION="$VERSION"
-          mkdir -p release
-          cp bin/Monban-*.pkg release/
-
       - uses: actions/upload-artifact@v4
         with:
           name: darwin-artifacts
           path: |
             desktop/release/*.zip
-            desktop/release/*.pkg
 
   build-linux-amd64:
     needs: [test]
@@ -112,7 +101,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libpam0g-dev
+          sudo apt-get install -y libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install wails3
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
@@ -123,6 +112,8 @@ jobs:
           version: "~> v2"
           args: release --skip=publish --clean -f .goreleaser-linux-amd64.yml
           workdir: desktop
+        env:
+          MONBAN_RELEASE_PUBKEY: ${{ secrets.MONBAN_PLUGIN_SIGNING_PUBKEY }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -158,7 +149,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libpam0g-dev
+          sudo apt-get install -y libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Install wails3
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74
@@ -169,6 +160,8 @@ jobs:
           version: "~> v2"
           args: release --skip=publish --clean -f .goreleaser-linux-arm64.yml
           workdir: desktop
+        env:
+          MONBAN_RELEASE_PUBKEY: ${{ secrets.MONBAN_PLUGIN_SIGNING_PUBKEY }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -195,7 +188,6 @@ jobs:
           cd artifacts
           cat checksums_linux_amd64.txt checksums_linux_arm64.txt > checksums.txt 2>/dev/null || true
           sha256sum monban_*.zip >> checksums.txt 2>/dev/null || true
-          sha256sum Monban-*.pkg >> checksums.txt 2>/dev/null || true
           rm -f checksums_linux_*.txt
 
       - name: Create GitHub release

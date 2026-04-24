@@ -32,3 +32,4 @@ desktop/monban
 .env
 .env.*
 test/
+docs/

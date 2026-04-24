@@ -8,9 +8,11 @@ export {
 
 export {
     AppStatus,
+    AvailablePlugin,
     CombinedSettings,
     DiskSpaceInfo,
     KeyInfo,
+    PluginPinTouchRequest,
     UpdateInfo,
     VaultStatus
 } from "./models.js";

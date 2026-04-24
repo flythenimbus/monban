@@ -1,568 +1,264 @@
-// monban-pam-helper is a standalone binary invoked by pam_exec.so to gate
-// sudo (and optionally authorization) behind a FIDO2 security key assertion.
+// monban-pam-helper is invoked by pam_monban.so (running as root via
+// the PAM stack: sudo, su, etc.) to gate privileged actions behind a
+// FIDO2 security-key assertion.
 //
-// Usage:
+// The helper is self-contained: it reads the PIN from /dev/tty,
+// loads the invoking user's SecureConfig, calls libfido2.Assert(),
+// and exits 0 on a verified signature. It does NOT need Monban's GUI
+// app to be running — the crypto runs right here in this binary.
 //
-//	pam_exec.so invokes this binary (no args) for authentication.
-//	sudo monban-pam-helper --install default|strict   Install to /usr/local/bin and configure PAM.
-//	sudo monban-pam-helper --uninstall                Remove PAM config and installed binary.
+// Source lives under desktop/ because it imports monban's internal
+// crypto; compiled output ships with the admin-gate plugin's
+// install_pkg and is placed at /Library/Monban/monban-pam-helper
+// (N20: /Library/ is root-owned by default so same-uid malware can't
+// replace it the way it could in a user-owned /usr/local/).
+//
+// Environment from pam_monban.so:
+//
+//	MONBAN_PAM_USER     — PAM user (e.g. "alice")
+//	MONBAN_PAM_SERVICE  — PAM service (e.g. "sudo")
+//
+// Exit 0 → PAM_SUCCESS. Anything else → PAM_AUTH_ERR so the stack
+// falls through to the next rule (typically the password prompt).
+//
+// If the user hasn't registered Monban yet, or there's no TTY
+// available to prompt, we exit 1 silently so sudo just falls back
+// without a confusing error on the terminal.
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"net"
+	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
-	"time"
-
-	"monban/internal/monban"
 
 	"golang.org/x/term"
+
+	"monban/internal/monban"
 )
 
-const (
-	installPath      = "/usr/local/bin/monban-pam-helper"
-	pamModuleDir     = "/usr/local/lib/pam"
-	pamModulePath    = "/usr/local/lib/pam/pam_monban.so"
-	authPluginDir    = "/Library/Security/SecurityAgentPlugins"
-	authPluginName   = "monban-auth.bundle"
-	authPluginPath   = authPluginDir + "/" + authPluginName
-	authMechanismID  = "monban-auth:auth"
-	authBackupSuffix = ".monban-backup"
-)
-
-// Authorization rights that monban gates on macOS.
-var authorizationRights = []string{
-	"system.preferences",
-	"system.preferences.security",
-}
+// errSilent signals main() not to print anything — just exit 1 so PAM
+// falls through to the next rule. Used for "no TTY", "user not
+// registered", "missing env" — all conditions where the gate simply
+// isn't applicable and shouldn't annoy the user.
+var errSilent = errors.New("silent")
 
 func main() {
-	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "--install":
-			mode := "default"
-			if len(os.Args) > 2 {
-				mode = os.Args[2]
-			}
-			if err := install(mode); err != nil {
-				fmt.Fprintf(os.Stderr, "monban: install failed: %v\n", err)
-				os.Exit(1)
-			}
-			return
-		case "--uninstall":
-			if err := uninstall(); err != nil {
-				fmt.Fprintf(os.Stderr, "monban: uninstall failed: %v\n", err)
-				os.Exit(1)
-			}
-			return
+	if err := run(); err != nil {
+		if errors.Is(err, errSilent) {
+			os.Exit(1)
 		}
-	}
-
-	if err := authenticate(); err != nil {
 		fmt.Fprintf(os.Stderr, "monban: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func install(mode string) error {
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("must be run with sudo")
-	}
-
-	pamMode := "sufficient"
-	if mode == "strict" {
-		pamMode = "required"
-	}
-
-	// Copy the helper binary to /usr/local/bin/.
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolving executable: %w", err)
-	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return fmt.Errorf("resolving symlinks: %w", err)
-	}
-
-	if exe != installPath {
-		if err := copyFile(exe, installPath, 0755); err != nil {
-			return err
-		}
-		fmt.Printf("Installed %s\n", installPath)
-	}
-
-	// Copy the PAM module to /usr/local/lib/pam/.
-	pamModuleSrc := filepath.Join(filepath.Dir(exe), "pam_monban.so")
-	if _, err := os.Stat(pamModuleSrc); err != nil {
-		return fmt.Errorf("pam_monban.so not found next to binary (%s) — rebuild with 'task build:pam-helper'", filepath.Dir(exe))
-	}
-	if err := os.MkdirAll(pamModuleDir, 0755); err != nil {
-		return fmt.Errorf("creating %s: %w", pamModuleDir, err)
-	}
-	if err := copyFile(pamModuleSrc, pamModulePath, 0644); err != nil {
-		return err
-	}
-	fmt.Printf("Installed %s\n", pamModulePath)
-
-	// Verify the installed module and helper exist before writing PAM config.
-	// A broken PAM config locks out sudo entirely.
-	if _, err := os.Stat(pamModulePath); err != nil {
-		return fmt.Errorf("PAM module not found at %s after install", pamModulePath)
-	}
-	if _, err := os.Stat(installPath); err != nil {
-		return fmt.Errorf("helper not found at %s after install", installPath)
-	}
-
-	// Write sudo PAM config referencing the module.
-	pamLine := fmt.Sprintf("auth %s %s %s\n",
-		pamMode, pamModulePath, monban.PamTag())
-
-	pamPath := monban.PamSudoPath()
-	if err := os.WriteFile(pamPath, []byte(pamLine), 0444); err != nil {
-		return fmt.Errorf("writing %s: %w", pamPath, err)
-	}
-	fmt.Printf("Configured %s (%s mode)\n", pamPath, mode)
-
-	// Strict mode also gates su to prevent root user activation bypass.
-	// On macOS, /etc/pam.d/su is SIP-protected and cannot be modified.
-	suPath := monban.PamSuPath()
-	if runtime.GOOS != "darwin" && mode == "strict" {
-		suData, _ := os.ReadFile(suPath)
-		suLines := strings.Split(string(suData), "\n")
-
-		// Remove any existing monban line.
-		filtered := make([]string, 0, len(suLines))
-		for _, line := range suLines {
-			if !strings.Contains(line, monban.PamTag()) {
-				filtered = append(filtered, line)
-			}
-		}
-
-		// Insert monban line before the first auth entry.
-		suPamLine := fmt.Sprintf("auth required %s %s", pamModulePath, monban.PamTag())
-		result := make([]string, 0, len(filtered)+1)
-		inserted := false
-		for _, line := range filtered {
-			if !inserted && strings.HasPrefix(strings.TrimSpace(line), "auth") {
-				result = append(result, suPamLine)
-				inserted = true
-			}
-			result = append(result, line)
-		}
-		if !inserted {
-			result = append(result, suPamLine)
-		}
-
-		if err := os.WriteFile(suPath, []byte(strings.Join(result, "\n")), 0444); err != nil {
-			return fmt.Errorf("writing %s: %w", suPath, err)
-		}
-		fmt.Printf("Configured %s (strict mode)\n", suPath)
-	} else {
-		// Non-strict: ensure su is clean.
-		removePamTag(suPath)
-	}
-
-	// Install macOS Authorization Plugin (gates system admin dialogs).
-	if runtime.GOOS == "darwin" {
-		if err := installAuthPlugin(exe); err != nil {
-			fmt.Fprintf(os.Stderr, "monban: auth plugin install warning: %v\n", err)
-		}
-	}
-
-	return nil
-}
-
-
-// --- macOS Authorization Plugin ---
-
-func installAuthPlugin(exe string) error {
-	// Find the auth plugin bundle adjacent to the binary (inside .app bundle).
-	appDir := filepath.Dir(exe)
-	bundleSrc := filepath.Join(appDir, "..", "Resources", authPluginName)
-	if _, err := os.Stat(bundleSrc); err != nil {
-		// Try next to the binary (dev builds).
-		bundleSrc = filepath.Join(appDir, authPluginName)
-		if _, err := os.Stat(bundleSrc); err != nil {
-			return fmt.Errorf("auth plugin bundle not found near %s", exe)
-		}
-	}
-
-	// Copy bundle to /Library/Security/SecurityAgentPlugins/
-	if err := os.RemoveAll(authPluginPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing old auth plugin: %w", err)
-	}
-	if err := copyDir(bundleSrc, authPluginPath); err != nil {
-		return fmt.Errorf("copying auth plugin: %w", err)
-	}
-	fmt.Printf("Installed %s\n", authPluginPath)
-
-	// Modify authorization rights to use our plugin mechanism.
-	for _, right := range authorizationRights {
-		if err := addAuthMechanism(right); err != nil {
-			fmt.Fprintf(os.Stderr, "monban: warning: could not configure right %s: %v\n", right, err)
-		} else {
-			fmt.Printf("Configured authorization right: %s\n", right)
-		}
-	}
-
-	return nil
-}
-
-func uninstallAuthPlugin() {
-	// Restore authorization rights to their default (remove our mechanism).
-	for _, right := range authorizationRights {
-		if err := removeAuthMechanism(right); err != nil {
-			fmt.Fprintf(os.Stderr, "monban: warning: could not restore right %s: %v\n", right, err)
-		} else {
-			fmt.Printf("Restored authorization right: %s\n", right)
-		}
-	}
-
-	// Remove the plugin bundle.
-	if err := os.RemoveAll(authPluginPath); err != nil && !os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "monban: warning: could not remove auth plugin: %v\n", err)
-	} else {
-		fmt.Printf("Removed %s\n", authPluginPath)
-	}
-}
-
-// addAuthMechanism converts an authorization right from class:user (password-based)
-// to class:evaluate-mechanisms with our plugin, preserving a backup of the original.
-func addAuthMechanism(right string) error {
-	// Read current right.
-	out, err := exec.Command("security", "authorizationdb", "read", right).Output()
-	if err != nil {
-		return fmt.Errorf("reading right: %w", err)
-	}
-
-	// Save backup of original right.
-	backupPath := filepath.Join(authPluginDir, right+authBackupSuffix)
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		_ = os.WriteFile(backupPath, out, 0600)
-	}
-
-	// Build new right with evaluate-mechanisms class.
-	newRight := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>class</key>
-	<string>evaluate-mechanisms</string>
-	<key>comment</key>
-	<string>Monban: FIDO2 security key authentication</string>
-	<key>mechanisms</key>
-	<array>
-		<string>%s</string>
-	</array>
-	<key>shared</key>
-	<false/>
-	<key>tries</key>
-	<integer>3</integer>
-</dict>
-</plist>`, authMechanismID)
-
-	cmd := exec.Command("security", "authorizationdb", "write", right)
-	cmd.Stdin = strings.NewReader(newRight)
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-// removeAuthMechanism restores the original authorization right from backup.
-func removeAuthMechanism(right string) error {
-	backupPath := filepath.Join(authPluginDir, right+authBackupSuffix)
-	data, err := os.ReadFile(backupPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("reading backup: %w", err)
-	}
-
-	cmd := exec.Command("security", "authorizationdb", "write", right)
-	cmd.Stdin = bytes.NewReader(data)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("restoring right: %w", err)
-	}
-
-	_ = os.Remove(backupPath)
-	return nil
-}
-
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, info.Mode())
-	})
-}
-
-// --- File helpers ---
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("reading %s: %w", src, err)
-	}
-	if err := os.WriteFile(dst, data, mode); err != nil {
-		return fmt.Errorf("writing %s: %w", dst, err)
-	}
-	return nil
-}
-
-func uninstall() error {
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("must be run with sudo")
-	}
-
-	// Clean monban line from su PAM config (don't delete the file — it has other entries).
-	removePamTag(monban.PamSuPath())
-
-	// Restore authorization rights and remove auth plugin (macOS).
-	if runtime.GOOS == "darwin" {
-		uninstallAuthPlugin()
-	}
-
-	for _, path := range []string{monban.PamSudoPath(), installPath, pamModulePath} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("removing %s: %w", path, err)
-		}
-		fmt.Printf("Removed %s\n", path)
-	}
-
-	return nil
-}
-
-// removePamTag removes the monban PAM line from a PAM config file, preserving
-// all other content. Unlike sudo_local which is monban-owned, su has existing
-// system entries that must be kept.
-func removePamTag(path string) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	tag := monban.PamTag()
-	lines := strings.Split(string(data), "\n")
-	filtered := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if !strings.Contains(line, tag) {
-			filtered = append(filtered, line)
-		}
-	}
-	_ = os.WriteFile(path, []byte(strings.Join(filtered, "\n")), 0444)
-}
-
-
-// resolveUserConfigDir determines the invoking user's config directory.
-// When running as root via PAM, os.UserHomeDir() returns /var/root.
-// We try multiple sources to find the real invoking user.
-func resolveUserConfigDir() error {
-	username := os.Getenv("PAM_USER")
+func run() error {
+	username := os.Getenv("MONBAN_PAM_USER")
 	if username == "" {
-		username = os.Getenv("SUDO_USER")
-	}
-	if username == "" {
-		username = os.Getenv("USER")
-	}
-	if username == "" {
-		username = os.Getenv("LOGNAME")
-	}
-	// On macOS, the console owner is the logged-in user.
-	if username == "" || username == "root" {
-		if name := consoleUser(); name != "" {
-			username = name
-		}
-	}
-	if username == "" || username == "root" {
-		return fmt.Errorf("cannot determine invoking user (PAM_USER, SUDO_USER, USER all unset or root)")
+		return errSilent
 	}
 	u, err := user.Lookup(username)
 	if err != nil {
-		return fmt.Errorf("looking up user %s: %w", username, err)
+		return errSilent
 	}
-	dir := filepath.Join(u.HomeDir, ".config", "monban")
-	monban.ConfigDir = func() string { return dir }
-	return nil
-}
 
-// consoleUser returns the owner of /dev/console (the logged-in GUI user on macOS).
-func consoleUser() string {
-	info, err := os.Stat("/dev/console")
+	cfgPath := filepath.Join(u.HomeDir, ".config", "monban", "credentials.json")
+	if _, err := os.Stat(cfgPath); err != nil {
+		// User never registered Monban — silently fall through.
+		return errSilent
+	}
+
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return ""
+		// No controlling terminal — stage 3 will route this through
+		// Monban's UI via the authorizationdb SecurityAgent plugin.
+		// For now, fall through silently.
+		return errSilent
 	}
-	// os.Stat returns *syscall.Stat_t via info.Sys()
-	if sys := info.Sys(); sys != nil {
-		if stat, ok := sys.(*syscall.Stat_t); ok {
-			u, err := user.LookupId(fmt.Sprintf("%d", stat.Uid))
-			if err == nil {
-				return u.Username
-			}
-		}
-	}
-	return ""
-}
+	defer func() { _ = tty.Close() }()
 
-func authenticate() error {
-	if err := resolveUserConfigDir(); err != nil {
+	pin, err := promptPIN(tty)
+	if err != nil {
 		return err
 	}
-
-	// Try TTY-based auth first (works for terminal sudo).
-	tty, ttyErr := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if ttyErr == nil {
-		defer func() { _ = tty.Close() }()
-		return authenticateViaTTY(tty)
+	if pin == "" {
+		ttyPrint(tty, "✗ cancelled\n")
+		return errSilent
 	}
 
-	// No TTY — try IPC to the running Monban app (GUI authorization flow).
-	return authenticateViaIPC()
+	return assertFIDO2(tty, cfgPath, pin)
 }
 
-func authenticateViaTTY(tty *os.File) error {
-	sc, err := monban.LoadSecureConfig()
-	if err != nil {
-		return fmt.Errorf("loading secure config: %w", err)
-	}
+// ttyPrint is a convenience wrapper around fmt.Fprintf for writing to
+// /dev/tty. We discard the return values deliberately: if the tty we
+// just opened has vanished mid-auth, there's nothing sensible to do.
+func ttyPrint(tty *os.File, format string, args ...any) {
+	_, _ = fmt.Fprintf(tty, format, args...)
+}
 
+// maxPINBytes caps how much we accept from the TTY when reading a PIN.
+// L2: without a cap a pathological write to /dev/tty could stuff many
+// megabytes before we get a newline. FIDO2 PINs are 4–63 UTF-8 bytes
+// by spec; 1 KB is a very generous upper bound that still keeps the
+// helper bounded.
+const maxPINBytes = 1024
+
+// promptPIN reads a PIN from the TTY without echoing it. Falls back
+// to a plain read if term.ReadPassword fails (rare — e.g. if we
+// somehow inherited a non-TTY fd on stdin). Output is capped at
+// maxPINBytes to prevent runaway input.
+func promptPIN(tty *os.File) (string, error) {
+	ttyPrint(tty, "Security key PIN: ")
+	raw, err := term.ReadPassword(int(tty.Fd()))
+	ttyPrint(tty, "\n")
+	if err == nil {
+		if len(raw) > maxPINBytes {
+			raw = raw[:maxPINBytes]
+		}
+		return string(raw), nil
+	}
+	var buf [maxPINBytes]byte
+	n, rerr := tty.Read(buf[:])
+	if rerr != nil && rerr != io.EOF {
+		return "", fmt.Errorf("read PIN: %w", rerr)
+	}
+	return strings.TrimRight(string(buf[:n]), "\r\n"), nil
+}
+
+// assertFIDO2 loads the user's SecureConfig and performs the full
+// unlock-style FIDO2 flow:
+//
+//  1. Assert against registered credential IDs (user touches key).
+//  2. Derive a wrapping key from hmac-secret and unwrap the master
+//     secret — AES-GCM auth tag fails for every credential except
+//     the one we actually asserted with.
+//  3. Verify the assertion signature against the matched credential's
+//     registered public key.
+//  4. Verify the SecureConfig's HMAC with the just-unwrapped master
+//     secret — this is the tamper check; a modified credentials.json
+//     produces a different HMAC and we refuse to authenticate.
+//
+// Master secret is zeroed before we return, success or failure.
+func assertFIDO2(tty *os.File, cfgPath, pin string) error {
+	sc, err := monban.LoadSecureConfigFrom(cfgPath)
+	if err != nil {
+		ttyPrint(tty, "✗ cannot read monban config\n")
+		return fmt.Errorf("load config: %w", err)
+	}
 	if len(sc.Credentials) == 0 {
-		return fmt.Errorf("no credentials registered")
+		ttyPrint(tty, "✗ no security keys registered\n")
+		return errSilent
+	}
+	// H3: apply the admin allowlist (if one is provisioned at
+	// /etc/monban/authorized_keys.json). Without this, any sudoer
+	// could replace ~/.config/monban/credentials.json with a
+	// registration to a random YubiKey and satisfy the PAM gate.
+	//
+	// N1: do NOT mutate sc.Credentials with the filtered set — the
+	// stored ConfigHMAC is computed over the full credential list,
+	// and VerifySecureConfig below must see the same list to match.
+	// Instead we keep sc intact and offer only allowlisted credential
+	// IDs to the YubiKey; the key will only produce an assertion for
+	// one of those, so non-allowlisted credentials can never satisfy
+	// the gate even though they remain in sc for HMAC verification.
+	allowed, err := filterAuthorized(sc.Credentials)
+	if err != nil {
+		ttyPrint(tty, "✗ admin allowlist is misconfigured — refusing\n")
+		return fmt.Errorf("allowlist: %w", err)
+	}
+	if len(allowed) == 0 {
+		// Either the user has no admin-approved keys, or the allowlist
+		// is empty. Fall through silently so sudo prompts for password.
+		return errSilent
 	}
 
 	hmacSalt, err := sc.DecodeHmacSalt()
 	if err != nil {
-		return err
+		return fmt.Errorf("decode hmac salt: %w", err)
 	}
-
-	_, _ = fmt.Fprint(tty, "monban: security key PIN: ")
-	pinBytes, err := term.ReadPassword(int(tty.Fd()))
-	_, _ = fmt.Fprintln(tty)
+	credIDs, err := collectCredentialIDs(allowed)
 	if err != nil {
-		return fmt.Errorf("reading PIN: %w", err)
-	}
-	pin := strings.TrimSpace(string(pinBytes))
-
-	credIDs, err := sc.CollectCredentialIDs()
-	if err != nil {
-		return err
+		return fmt.Errorf("collect credential ids: %w", err)
 	}
 
-	_, _ = fmt.Fprint(tty, "monban: touch your security key...\n")
+	ttyPrint(tty, "Touch your security key…\n")
+
 	assertion, err := monban.Assert(pin, credIDs, hmacSalt)
 	if err != nil {
-		return fmt.Errorf("FIDO2 assertion failed: %w", err)
+		ttyPrint(tty, "✗ %s\n", friendly(err))
+		return err
+	}
+	if len(assertion.HMACSecret) == 0 {
+		ttyPrint(tty, "✗ key did not return hmac-secret\n")
+		return fmt.Errorf("no hmac-secret from key")
 	}
 
-	var verified bool
-	for i := range sc.Credentials {
-		cred := &sc.Credentials[i]
-		credID, _ := monban.DecodeB64(cred.CredentialID)
-		if assertion.CredentialID != nil && !bytes.Equal(credID, assertion.CredentialID) {
-			continue
-		}
-		if err := monban.VerifyAssertionWithSalt(sc.RpID, cred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err == nil {
-			verified = true
-			break
-		}
-	}
-
-	if !verified {
-		return fmt.Errorf("monban: no matching registered key")
-	}
-
-	_, _ = fmt.Fprint(tty, "monban: authenticated\n")
-	return nil
-}
-
-func authenticateViaIPC() error {
-	sockPath := monban.IPCSocketPath()
-
-	conn, err := tryConnect(sockPath)
+	wrappingKey, err := monban.DeriveWrappingKey(assertion.HMACSecret, hmacSalt)
+	defer monban.ZeroBytes(assertion.HMACSecret, wrappingKey)
 	if err != nil {
-		// App not running — try launching it
-		if launchErr := launchApp(); launchErr != nil {
-			return fmt.Errorf("FIDO2 auth failed: no TTY and could not launch Monban: %w", launchErr)
+		return fmt.Errorf("derive wrapping key: %w", err)
+	}
+
+	masterSecret, matchedCred, err := monban.UnwrapMasterSecret(sc, wrappingKey)
+	if err != nil {
+		ttyPrint(tty, "✗ no matching registered key\n")
+		return fmt.Errorf("unwrap master secret: %w", err)
+	}
+	defer monban.ZeroBytes(masterSecret)
+
+	// Belt+suspenders: UnwrapMasterSecret iterated the full credential
+	// list (needed so VerifySecureConfig's HMAC matches later). In
+	// practice only an allowlisted credential's wrapped_key can unwrap
+	// with the just-derived wrappingKey — but assert it explicitly so
+	// a future refactor can't weaken the allowlist gate.
+	if !isCredInAllowed(matchedCred, allowed) {
+		ttyPrint(tty, "✗ authenticated key is not in admin allowlist\n")
+		return errSilent
+	}
+
+	if err := monban.VerifyAssertionWithSalt(sc.RpID, matchedCred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err != nil {
+		ttyPrint(tty, "✗ assertion signature verification failed\n")
+		return fmt.Errorf("verify assertion: %w", err)
+	}
+
+	// Tamper check: HMAC over credentials, vaults, settings, etc.
+	// A modified credentials.json produces a mismatching HMAC and we
+	// refuse even when the key physically authenticated, because
+	// something outside Monban has been editing the config.
+	if err := monban.VerifySecureConfig(sc, masterSecret, hmacSalt); err != nil {
+		if err == monban.ErrConfigTampered {
+			ttyPrint(tty, "✗ monban config has been tampered with — open Monban to investigate\n")
+			return fmt.Errorf("%w", err)
 		}
-
-		conn, err = tryConnectWithRetry(sockPath, 5*time.Second)
-		if err != nil {
-			return fmt.Errorf("FIDO2 auth failed: could not connect to Monban after launch: %w", err)
+		if err == monban.ErrConfigUnsigned {
+			// Legacy configs from before HMAC signing: let auth pass
+			// but warn. They'll be signed on the next Monban unlock.
+			ttyPrint(tty, "! config unsigned (legacy) — auth accepted\n")
+		} else {
+			ttyPrint(tty, "✗ config check: %s\n", err)
+			return err
 		}
 	}
-	defer func() { _ = conn.Close() }()
 
-	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
-
-	pamUser := os.Getenv("PAM_USER")
-	if pamUser == "" {
-		pamUser = os.Getenv("SUDO_USER")
-	}
-	pamService := os.Getenv("PAM_SERVICE")
-
-	req := monban.IPCRequest{
-		Type:    "auth",
-		User:    pamUser,
-		Service: pamService,
-	}
-
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return fmt.Errorf("sending IPC request: %w", err)
-	}
-
-	var resp monban.IPCResponse
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return fmt.Errorf("reading IPC response: %w", err)
-	}
-
-	if !resp.Success {
-		return fmt.Errorf("auth denied: %s", resp.Error)
-	}
-
+	ttyPrint(tty, "✓ authenticated\n")
 	return nil
 }
 
-func tryConnect(sockPath string) (net.Conn, error) {
-	return net.DialTimeout("unix", sockPath, 2*time.Second)
-}
-
-func tryConnectWithRetry(sockPath string, timeout time.Duration) (net.Conn, error) {
-	deadline := time.Now().Add(timeout)
-	delay := 500 * time.Millisecond
-
-	for time.Now().Before(deadline) {
-		conn, err := tryConnect(sockPath)
-		if err == nil {
-			return conn, nil
-		}
-		time.Sleep(delay)
-		if delay < 2*time.Second {
-			delay *= 2
-		}
+// friendly turns noisier libfido2 errors into something a user
+// actually wants to see in a terminal.
+func friendly(err error) string {
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "PIN"):
+		return "incorrect PIN or locked key"
+	case strings.Contains(s, "no device"):
+		return "no security key detected"
+	case strings.Contains(s, "timeout"), strings.Contains(s, "ERR_USER_ACTION_TIMEOUT"):
+		return "timed out waiting for touch"
 	}
-	return nil, fmt.Errorf("connection timed out")
-}
-
-func launchApp() error {
-	if runtime.GOOS == "darwin" {
-		return exec.Command("open", "-a", "Monban").Start()
-	}
-	return exec.Command("monban").Start()
+	return s
 }

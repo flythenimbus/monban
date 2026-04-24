@@ -55,6 +55,11 @@ tasks:
     cmds:
       - task: "{{OS}}:package"
 
+  package:dev:
+    summary: Packages a production-tagged build with desktop/prod-release.pub baked in (local testing)
+    cmds:
+      - task: "{{OS}}:package:dev"
+
   run:
     summary: Runs the application
     cmds:
@@ -64,6 +69,18 @@ tasks:
     summary: Runs the application in development mode
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
+
+  dev:prodkey:
+    summary: Runs the app from source with the production plugin pubkey injected
+    desc: |
+      Same as `task dev` but bakes prod-release.pub into the binary so it
+      trusts plugin artefacts signed in CI with MONBAN_PLUGIN_SIGNING_KEY.
+      Used to reproduce the real install flow against live GitHub releases.
+    preconditions:
+      - sh: '[ -f prod-release.pub ]'
+        msg: "desktop/prod-release.pub missing — generate with `./bin/monban-sign generate-key`"
+    cmds:
+      - go run -ldflags "-X monban/internal/plugin.ReleasePubKeyHex=$(cat prod-release.pub)" .
 
   setup:docker:
     summary: Builds Docker image for cross-compilation (~800MB download)
@@ -105,6 +122,32 @@ tasks:
     cmds:
       - git tag v{{.VERSION}}
       - git push origin v{{.VERSION}}
+
+  plugin:release:
+    summary: Cuts a plugin-store release by pushing a plugins-v<version> tag
+    preconditions:
+      - sh: '[ -n "{{.VERSION}}" ]'
+        msg: "VERSION is required. Usage: task plugin:release VERSION=0.1.0"
+    cmds:
+      - git tag plugins-v{{.VERSION}}
+      - git push origin plugins-v{{.VERSION}}
+
+  plugin:release:test:
+    summary: Pushes a plugins-v<version> release candidate tag to test the plugin workflow
+    vars:
+      VERSION: '{{.VERSION | default "0.0.1-rc1"}}'
+    cmds:
+      - git tag plugins-v{{.VERSION}}
+      - git push origin plugins-v{{.VERSION}}
+
+  plugin:release:test:cleanup:
+    summary: Deletes a plugins-v<version> candidate tag and its GitHub release
+    vars:
+      VERSION: '{{.VERSION | default "0.0.1-rc1"}}'
+    cmds:
+      - gh release delete plugins-v{{.VERSION}} --yes 2>/dev/null || true
+      - git push origin --delete plugins-v{{.VERSION}} 2>/dev/null || true
+      - git tag -d plugins-v{{.VERSION}} 2>/dev/null || true
 
   build:docker:
     summary: Builds a Docker image for server mode deployment

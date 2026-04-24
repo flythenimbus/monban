@@ -65,6 +65,10 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 		promptAccessibilityPermission()
 	}
 
+	a.pluginHost.Fire("on:settings_changed", map[string]any{
+		"pluginName": "core",
+	})
+
 	return nil
 }
 
@@ -121,6 +125,7 @@ func (a *App) RemoveKey(credentialID string, pin string) error {
 	}
 	defer monban.ZeroBytes(masterSecret)
 
+	removed := sc.Credentials[idx]
 	sc.Credentials = append(sc.Credentials[:idx], sc.Credentials[idx+1:]...)
 
 	hmacSalt, err := sc.DecodeHmacSalt()
@@ -133,5 +138,9 @@ func (a *App) RemoveKey(credentialID string, pin string) error {
 	}
 
 	a.secureCfg = sc
+	a.pluginHost.Fire("on:key_removed", map[string]any{
+		"credentialID": removed.CredentialID,
+		"label":        removed.Label,
+	})
 	return nil
 }

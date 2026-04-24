@@ -65,27 +65,10 @@ export function VaultRow({
 		}
 	};
 
-	const handleModeChange = async (newMode: string) => {
+	const handleModeChange = (newMode: string) => {
 		if (newMode === mode) return;
-
-		const needsPin = mode === "lazy_strict" || newMode === "lazy_strict";
-
-		if (needsPin) {
-			setPendingMode(newMode);
-			setState("pin_input");
-			return;
-		}
-
-		setState("loading");
-		setError("");
-		try {
-			await api.updateVaultMode(vault.path, newMode, "");
-			await onRefresh();
-			setState("idle");
-		} catch (err: unknown) {
-			setError(friendlyError(err));
-			setState("error");
-		}
+		setPendingMode(newMode);
+		setState("pin_input");
 	};
 
 	const handleModeChangeWithPin = async () => {

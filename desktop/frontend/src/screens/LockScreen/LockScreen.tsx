@@ -11,6 +11,7 @@ import {
 import { useAutoResize } from "../../hooks/useAutoResize";
 import { useDevicePolling } from "../../hooks/useDevicePolling";
 import type { LockState, Settings } from "../../types";
+import { cn } from "../../util/cn";
 import { friendlyError } from "../../util/errors";
 
 interface Props {
@@ -49,7 +50,10 @@ export function LockScreen({ onUnlock }: Props) {
 	return (
 		<div
 			ref={contentRef}
-			className={`gradient-bg flex flex-col items-center justify-center p-8 select-none ${forceAuth ? "min-h-screen" : "pt-14 pb-8"}`}
+			className={cn(
+				"gradient-bg flex flex-col items-center justify-center p-8 select-none",
+				forceAuth ? "min-h-screen" : "pt-14 pb-8",
+			)}
 			style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
 		>
 			<div className="mb-6 opacity-80">

@@ -92,6 +92,7 @@ func (a *App) RemoveFolder(folderPath string, pin string) error {
 	}
 	defer monban.ZeroBytes(masterSecret)
 
+	removed := sc.Vaults[idx]
 	sc.Vaults = append(sc.Vaults[:idx], sc.Vaults[idx+1:]...)
 
 	hmacSalt, err := sc.DecodeHmacSalt()
@@ -103,6 +104,10 @@ func (a *App) RemoveFolder(folderPath string, pin string) error {
 	}
 
 	a.secureCfg = sc
+	a.pluginHost.Fire("on:vault_removed", map[string]any{
+		"vaultPath": removed.Path,
+		"type":      removed.Type,
+	})
 	return nil
 }
 
@@ -362,6 +367,10 @@ func (a *App) addFolder(absPath string, pin string) error {
 	}
 
 	a.secureCfg = sc
+	a.pluginHost.Fire("on:vault_added", map[string]any{
+		"vaultPath": absPath,
+		"type":      "",
+	})
 	return nil
 }
 
@@ -420,6 +429,10 @@ func (a *App) addFile(absPath string, pin string) error {
 	}
 
 	a.secureCfg = sc
+	a.pluginHost.Fire("on:vault_added", map[string]any{
+		"vaultPath": absPath,
+		"type":      "file",
+	})
 	return nil
 }
 

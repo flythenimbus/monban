@@ -347,6 +347,47 @@ func TestVerifySecureConfigUnsigned(t *testing.T) {
 	}
 }
 
+// TestConfigHMAC_RejectsColonCollision ensures length-prefixing does
+// its job: two configs whose label/path differ only in where a `:`
+// falls cannot produce the same canonical payload (M2 regression).
+func TestConfigHMAC_RejectsColonCollision(t *testing.T) {
+	a := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Vaults:   []VaultEntry{{Label: "A:/", Path: "root", Type: ""}},
+	}
+	b := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64([]byte("test-salt-32-bytes-long-enough!!")),
+		Vaults:   []VaultEntry{{Label: "A", Path: "/root", Type: ""}},
+	}
+	if configHMACPayload(a) == configHMACPayload(b) {
+		t.Errorf("length-prefixing should keep %q/%q and %q/%q distinct",
+			a.Vaults[0].Label, a.Vaults[0].Path, b.Vaults[0].Label, b.Vaults[0].Path)
+	}
+}
+
+// TestSignVerifyRoundTrip sanity-checks Sign→Verify on a representative
+// config. Failure here = all users get locked out on next unlock.
+func TestSignVerifyRoundTrip(t *testing.T) {
+	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
+	salt := []byte("test-salt-32-bytes-long-enough!!")
+
+	sc := &SecureConfig{
+		RpID:                "monban.local",
+		HmacSalt:            EncodeB64(salt),
+		Credentials:         []CredentialEntry{{Label: "Key", CredentialID: "abc", PublicKeyX: "x", PublicKeyY: "y", WrappedKey: "w"}},
+		ForceAuthentication: true,
+		Vaults:              []VaultEntry{{Label: "Docs", Path: "/test"}},
+	}
+	if err := SignSecureConfig(sc, master, salt); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySecureConfig(sc, master, salt); err != nil {
+		t.Fatalf("sign/verify round-trip failed: %v", err)
+	}
+}
+
 func TestSignSecureConfigDeterministic(t *testing.T) {
 	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
 	salt := []byte("test-salt-32-bytes-long-enough!!")
@@ -893,6 +934,80 @@ func TestSaveCounterWorksWhileDirLocked(t *testing.T) {
 	}
 	if val != 99 {
 		t.Errorf("counter: got %d, want 99", val)
+	}
+}
+
+func TestPluginSettingsCoveredByHMAC(t *testing.T) {
+	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
+	salt := []byte("test-salt-32-bytes-long-enough!!")
+
+	sc := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64(salt),
+		PluginSettings: map[string]json.RawMessage{
+			"hello-world": json.RawMessage(`{"verbose":true}`),
+		},
+	}
+	if err := SignSecureConfig(sc, master, salt); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySecureConfig(sc, master, salt); err != nil {
+		t.Fatalf("Verify on signed config: %v", err)
+	}
+
+	// Tamper with plugin settings after signing
+	sc.PluginSettings["hello-world"] = json.RawMessage(`{"verbose":false}`)
+	if err := VerifySecureConfig(sc, master, salt); err != ErrConfigTampered {
+		t.Fatalf("expected ErrConfigTampered after tampering plugin setting, got %v", err)
+	}
+}
+
+func TestPluginSettingsCanonicalJSON(t *testing.T) {
+	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
+	salt := []byte("test-salt-32-bytes-long-enough!!")
+
+	// Same logical value, different key order / whitespace
+	sc1 := &SecureConfig{
+		RpID:           "monban.local",
+		HmacSalt:       EncodeB64(salt),
+		PluginSettings: map[string]json.RawMessage{"p": json.RawMessage(`{"a":1,"b":2}`)},
+	}
+	sc2 := &SecureConfig{
+		RpID:           "monban.local",
+		HmacSalt:       EncodeB64(salt),
+		PluginSettings: map[string]json.RawMessage{"p": json.RawMessage(`{ "b" : 2 , "a" : 1 }`)},
+	}
+	_ = SignSecureConfig(sc1, master, salt)
+	_ = SignSecureConfig(sc2, master, salt)
+	if sc1.ConfigHMAC != sc2.ConfigHMAC {
+		t.Errorf("equivalent plugin settings produced different HMAC: %s vs %s", sc1.ConfigHMAC, sc2.ConfigHMAC)
+	}
+}
+
+func TestPluginSettingsOrderIndependent(t *testing.T) {
+	master := []byte("test-master-secret-64-bytes-long-enough-for-hkdf-derivation!!!!!")
+	salt := []byte("test-salt-32-bytes-long-enough!!")
+
+	sc1 := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64(salt),
+		PluginSettings: map[string]json.RawMessage{
+			"alpha": json.RawMessage(`{"x":1}`),
+			"beta":  json.RawMessage(`{"y":2}`),
+		},
+	}
+	sc2 := &SecureConfig{
+		RpID:     "monban.local",
+		HmacSalt: EncodeB64(salt),
+		PluginSettings: map[string]json.RawMessage{
+			"beta":  json.RawMessage(`{"y":2}`),
+			"alpha": json.RawMessage(`{"x":1}`),
+		},
+	}
+	_ = SignSecureConfig(sc1, master, salt)
+	_ = SignSecureConfig(sc2, master, salt)
+	if sc1.ConfigHMAC != sc2.ConfigHMAC {
+		t.Error("plugin settings HMAC must not depend on map iteration order")
 	}
 }
 

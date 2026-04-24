@@ -20,8 +20,6 @@ Monban encrypts your stuff using AES-256-GCM. You unlock it with a FIDO2 securit
 
 👉 **Lazy mode** - vaults can stay locked until you actually need them, or require a fresh PIN + tap every time
 
-👉 **Admin gate** - sudo and system admin dialogs require your security key (su too, with a bit of recovery-mode setup — see below)
-
 👉 **Easy backup** - export your vault config so you don't get locked out
 
 ## How It Works
@@ -53,27 +51,6 @@ Monban encrypts your stuff using AES-256-GCM. You unlock it with a FIDO2 securit
 - Feitian (BioPass, ePass)
 - OnlyKey
 
-## Advanced Hardening (macOS only)
-
-By default the installer can't touch `/etc/pam.d/su`. Apple locks it behind SIP. That leaves one escalation path open: if an attacker knows your login password, they can run `dsenableroot` (we can't gate it since Apple's code crashes when we try) and then `su -` into root without ever touching your key.
-
-Closing that path requires a one-time trip through Recovery Mode. You're accepting a weaker SIP stance in exchange for a stricter root boundary. If you lose your key, you'll need the same recovery-mode trip to back out.
-
-1. Reboot holding the power button, pick **Options** → **Continue**.
-2. Utilities → Terminal → `csrutil authenticated-root disable`, enter your password, reboot.
-3. Back in macOS: `sudo mount -uw /`
-4. Append the same gate line to su's PAM config:
-   ```
-   echo 'auth sufficient /usr/local/lib/pam/pam_monban.so # monban su gate' \
-     | sudo tee -a /etc/pam.d/su > /dev/null
-   ```
-5. Reseal the system snapshot: `sudo bless --folder /System/Library/CoreServices --bootefi --create-snapshot`
-6. Reboot.
-
-Now `su` requires your key too. `dsenableroot` can still set a root password, but the password alone won't let anyone become root - they'd need to tap your key. Major macOS upgrades reset `/etc/pam.d/su`; you'll need to redo steps 3-6 after them.
-
-To undo: same dance, but edit the file to remove the monban line (or re-enable SIP with `csrutil enable`).
-
 ## Projects
 
 - [`desktop/`](desktop/) - Desktop app (macOS, Linux). Wails v3 + React + Tailwind v4.
@@ -82,6 +59,73 @@ To undo: same dance, but edit the file to remove the monban line (or re-enable S
 ## Contributing
 
 Want to help? Open an issue first so we can talk about it, then send a PR.
+
+### What you need
+
+- Go 1.26+
+- Bun
+- Wails v3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.74`
+- libfido2 — `brew install libfido2` on macOS, `apt install libfido2-dev libgtk-3-dev libwebkit2gtk-4.1-dev` on Debian/Ubuntu
+- Messing with plugins on macOS? You'll also want Xcode command-line tools
+
+### Getting set up
+
+```bash
+git clone https://github.com/flythenimbus/monban.git
+cd monban/desktop
+```
+
+If you just want to build and run the app, you're done - the committed dev pubkey already matches. If you plan to build and sign plugins locally, you need your own keypair:
+
+```bash
+task common:build:monban-sign
+./bin/monban-sign generate-key \
+  ./cmd/monban-sign/testkeys/dev-release.pub \
+  ./cmd/monban-sign/testkeys/dev-release.key
+```
+
+The `.key` is git-ignored and stays on your machine. If you regenerate, update `defaultDevPubKeyHex` in `internal/plugin/devkey.go` to match - and keep that change off your PR, the committed one stays authoritative.
+
+### Running it
+
+```bash
+task dev              # Wails dev server, DevTools on
+task test             # Go tests
+task lint             # golangci-lint + bun lint
+```
+
+Testing the plugin install flow? Pick the mode that matches what your plugin is signed with:
+
+```bash
+task dev              # trusts your dev key - for plugins you built locally
+task dev:prodkey      # trusts the prod key - for real CI-signed releases
+```
+
+### Building a plugin
+
+Reference plugin is `plugins/admin_gate` (macOS only, gates sudo behind your key):
+
+```bash
+cd plugins/admin_gate
+./build.sh
+```
+
+Signs with your dev key, outputs everything into `dist/`. Then **Admin → Plugins → Install** in the running app. For fully local testing without going through a GitHub release, `task plugin:release:test` cuts a disposable tag.
+
+### Security tests
+
+Path-escape and install guards live in `desktop/internal/plugin/security_test.go`:
+
+```bash
+cd desktop
+go test ./internal/plugin/ -run 'TestResolvePluginPath|TestInstaller' -v
+```
+
+### Before your PR
+
+- `task test` and `task lint` pass
+- Nothing under `testkeys/*.key` shows up in your diff - the dev private key is per-developer, never commit it
+- Touched the plugin loader or verifier? Add a case to `security_test.go`
 
 ## Donate
 

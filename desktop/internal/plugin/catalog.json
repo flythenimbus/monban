@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "plugins": [
+    {
+      "name": "admin-gate",
+      "display_name": "Admin Gate",
+      "version": "0.1.0",
+      "description": "Gate sudo and macOS admin dialogs behind your security key.",
+      "platforms": ["darwin-arm64"],
+      "manifest_url":     "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-manifest.json",
+      "manifest_sig_url": "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-manifest.json.sig",
+      "tarball_url":      "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-{platform}.tar.gz",
+      "tarball_sig_url":  "https://github.com/flythenimbus/monban/releases/download/plugins-v0.1.0/admin-gate-{version}-{platform}.tar.gz.sig"
+    }
+  ]
+}

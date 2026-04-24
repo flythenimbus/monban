@@ -9,48 +9,41 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// --- Public functions ---
+
 // DeriveWrappingKey derives an AES-256 key from the security key's hmac-secret output.
 // Used to encrypt/decrypt the master secret for multi-key support.
 func DeriveWrappingKey(hmacSecret, hmacSalt []byte) ([]byte, error) {
-	r := hkdf.New(sha256.New, hmacSecret, hmacSalt, []byte("monban-keywrap-v1"))
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(r, key); err != nil {
-		return nil, fmt.Errorf("HKDF wrapping key: %w", err)
-	}
-	return key, nil
+	return hkdfKey(hmacSecret, hmacSalt, []byte("monban-keywrap-v1"), "wrapping")
 }
 
 // DeriveEncryptionKey derives the file encryption key from the master secret.
 // This key is used for AES-256-GCM file-level encryption.
 func DeriveEncryptionKey(masterSecret, hmacSalt []byte) ([]byte, error) {
-	r := hkdf.New(sha256.New, masterSecret, hmacSalt, []byte("monban-fileenc-v1"))
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(r, key); err != nil {
-		return nil, fmt.Errorf("HKDF encryption key: %w", err)
-	}
-	return key, nil
+	return hkdfKey(masterSecret, hmacSalt, []byte("monban-fileenc-v1"), "encryption")
 }
 
 // DeriveLazyStrictKey derives the file encryption key from the master secret for a particular lazy_strict vault.
 // This key is used for AES-256-GCM file-level encryption for a specific vault.
 func DeriveLazyStrictKey(masterSecret, hmacSalt []byte, vaultPath string) ([]byte, error) {
-	info := []byte("monban-lazy-strict-v1:" + vaultPath)
-	r := hkdf.New(sha256.New, masterSecret, hmacSalt, info)
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(r, key); err != nil {
-		return nil, fmt.Errorf("HKDF lazy-strict key: %w", err)
-	}
-	return key, nil
+	return hkdfKey(masterSecret, hmacSalt, []byte("monban-lazy-strict-v1:"+vaultPath), "lazy-strict")
+}
+
+// DeriveConfigAuthKey derives a key for HMAC-signing the secure config.
+// This key is derived from the master secret and is used to detect tampering.
+func DeriveConfigAuthKey(masterSecret, hmacSalt []byte) ([]byte, error) {
+	return hkdfKey(masterSecret, hmacSalt, []byte("monban-config-auth-v1"), "config auth")
 }
 
 // GenerateMasterSecret generates a random 64-byte master secret.
 // This secret is wrapped by each security key's hmac-secret derived key.
 func GenerateMasterSecret() ([]byte, error) {
-	secret := make([]byte, 64)
-	if _, err := rand.Read(secret); err != nil {
-		return nil, fmt.Errorf("generating master secret: %w", err)
-	}
-	return secret, nil
+	return randomBytes(64, "master secret")
+}
+
+// GenerateHmacSalt generates a 32-byte random salt for FIDO2 hmac-secret.
+func GenerateHmacSalt() ([]byte, error) {
+	return randomBytes(32, "hmac salt")
 }
 
 // WrapKey encrypts plaintext with AES-256-GCM using the given wrapping key.
@@ -67,11 +60,9 @@ func WrapKey(wrappingKey, plaintext []byte) ([]byte, error) {
 	}
 
 	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
-	// Prepend nonce to ciphertext
 	result := make([]byte, len(nonce)+len(ciphertext))
 	copy(result, nonce)
 	copy(result[len(nonce):], ciphertext)
-
 	return result, nil
 }
 
@@ -89,43 +80,38 @@ func UnwrapKey(wrappingKey, data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("wrapped key too short")
 	}
 
-	nonce := data[:nonceSize]
-	ciphertext := data[nonceSize:]
-
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := gcm.Open(nil, data[:nonceSize], data[nonceSize:], nil)
 	if err != nil {
 		return nil, fmt.Errorf("unwrap failed (wrong key or corrupted): %w", err)
 	}
-
 	return plaintext, nil
-}
-
-// DeriveConfigAuthKey derives a key for HMAC-signing the secure config.
-// This key is derived from the master secret and is used to detect tampering.
-func DeriveConfigAuthKey(masterSecret, hmacSalt []byte) ([]byte, error) {
-	r := hkdf.New(sha256.New, masterSecret, hmacSalt, []byte("monban-config-auth-v1"))
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(r, key); err != nil {
-		return nil, fmt.Errorf("HKDF config auth key: %w", err)
-	}
-	return key, nil
 }
 
 // ZeroBytes overwrites byte slices with zeros.
 // Call this on sensitive key material when it's no longer needed.
 func ZeroBytes(slices ...[]byte) {
 	for _, b := range slices {
-		for i := range b {
-			b[i] = 0
-		}
+		clear(b)
 	}
 }
 
-// GenerateHmacSalt generates a 32-byte random salt for FIDO2 hmac-secret.
-func GenerateHmacSalt() ([]byte, error) {
-	salt := make([]byte, 32)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, fmt.Errorf("generating hmac salt: %w", err)
+// --- Private helpers ---
+
+// hkdfKey derives a 32-byte key via HKDF-SHA256. label is used only for error context.
+func hkdfKey(ikm, salt, info []byte, label string) ([]byte, error) {
+	r := hkdf.New(sha256.New, ikm, salt, info)
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(r, key); err != nil {
+		return nil, fmt.Errorf("HKDF %s key: %w", label, err)
 	}
-	return salt, nil
+	return key, nil
+}
+
+// randomBytes returns n cryptographically random bytes. label is used only for error context.
+func randomBytes(n int, label string) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("generating %s: %w", label, err)
+	}
+	return b, nil
 }
