@@ -22,7 +22,7 @@
 		<key>CFBundleExecutable</key>
 		<string>Monban</string>
 		<key>CFBundleGetInfoString</key>
-		<string>This is a comment</string>
+		<string>Monban — security key-based folder encryption</string>
 		<key>CFBundleIconFile</key>
 		<string>icons</string>
 		<key>CFBundleIconName</key>
@@ -34,14 +34,15 @@
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
 		<key>CFBundleShortVersionString</key>
-		<string>0.1.0</string>
+		<string>0.0.0</string>
 		<key>CFBundleVersion</key>
-		<string>0.1.0</string>
+		<string>0.0.0</string>
 		<key>LSMinimumSystemVersion</key>
 		<string>10.15.0</string>
 		<key>NSHighResolutionCapable</key>
 		<string>true</string>
 		<key>NSHumanReadableCopyright</key>
-		<string>(c) 2026, Monban</string>
+		<string>Created by flythenimbus • monban.app
+Licensed under GPLv3</string>
 	</dict>
 </plist>

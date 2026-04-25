@@ -132,6 +132,7 @@ function App() {
 						onUnlock={() => {
 							api.exitFullscreen();
 							setView("admin");
+							void api.promptUpdateIfAvailable();
 						}}
 					/>
 				);

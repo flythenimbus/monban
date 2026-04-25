@@ -16,7 +16,7 @@ builds:
       - -trimpath
       - -buildvcs=false
     ldflags:
-      - -w -s -X main.Version={{.Version}}{{ if index .Env "MONBAN_RELEASE_PUBKEY" }} -X monban/internal/plugin.ReleasePubKeyHex={{ .Env.MONBAN_RELEASE_PUBKEY }}{{ end }}
+      - -w -s -X monban/internal/app.Version={{.Version}}{{ if index .Env "MONBAN_RELEASE_PUBKEY" }} -X monban/internal/plugin.ReleasePubKeyHex={{ .Env.MONBAN_RELEASE_PUBKEY }}{{ end }}
     env:
       - CGO_ENABLED=1
       - CGO_LDFLAGS=-lfido2

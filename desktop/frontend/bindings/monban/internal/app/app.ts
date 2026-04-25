@@ -202,6 +202,16 @@ export function LockVault(path: string): $CancellablePromise<void> {
 }
 
 /**
+ * PromptUpdateIfAvailable runs an async update check and, on a tagged release
+ * build with a newer version on GitHub, shows a native "update available"
+ * dialog. Frontend calls this once after a successful unlock. No-op in dev
+ * builds and on network errors.
+ */
+export function PromptUpdateIfAvailable(): $CancellablePromise<void> {
+    return $Call.ByID(2832978530);
+}
+
+/**
  * Register creates a new FIDO2 credential and wraps the master secret with it.
  * If this is the first credential, generates the master secret and hmac salt.
  * If credentials already exist, wraps the existing master secret with the new key.
@@ -247,6 +257,10 @@ export function RespondPluginPinTouch(id: string, pin: string): $CancellableProm
  */
 export function RevealSecureConfig(): $CancellablePromise<void> {
     return $Call.ByID(204196149);
+}
+
+export function SetWailsApp(app: application$0.App | null): $CancellablePromise<void> {
+    return $Call.ByID(1684889128, app);
 }
 
 export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePromise<void> {

@@ -66,6 +66,8 @@ export const api = {
 	checkForUpdate: (): Promise<UpdateInfo> =>
 		App.CheckForUpdate() as unknown as Promise<UpdateInfo>,
 
+	promptUpdateIfAvailable: (): Promise<void> => App.PromptUpdateIfAvailable(),
+
 	listPlugins: (): Promise<PluginStatus[]> =>
 		App.ListPlugins() as unknown as Promise<PluginStatus[]>,
 

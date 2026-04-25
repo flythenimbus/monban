@@ -91,6 +91,7 @@ func main() {
 	systemTray.SetMenu(trayMenu)
 
 	app.SetWindow(win)
+	app.SetWailsApp(wailsApp)
 
 	monbanapp.RegisterHardeningHooks(app)
 	if app.GetSettings().OpenOnStartup {

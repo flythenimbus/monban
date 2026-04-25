@@ -58,6 +58,7 @@ type App struct {
 	locked       bool
 	masterSecret []byte // in-memory only, zeroed on lock
 	encKey       []byte // derived file encryption key, zeroed on lock
+	wailsApp     *application.App
 	window       *application.WebviewWindow
 	pluginHost   *plugin.Host
 
@@ -130,6 +131,10 @@ func NewApp() *App {
 
 func (a *App) SetWindow(w *application.WebviewWindow) {
 	a.window = w
+}
+
+func (a *App) SetWailsApp(app *application.App) {
+	a.wailsApp = app
 }
 
 func (a *App) IsLocked() bool {

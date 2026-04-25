@@ -19,6 +19,34 @@ func (a *App) GetVersion() string {
 	return Version
 }
 
+// PromptUpdateIfAvailable runs an async update check and, on a tagged release
+// build with a newer version on GitHub, shows a native "update available"
+// dialog. Frontend calls this once after a successful unlock. No-op in dev
+// builds and on network errors.
+func (a *App) PromptUpdateIfAvailable() {
+	if Version == "dev" || a.wailsApp == nil {
+		return
+	}
+	go func() {
+		info, err := a.CheckForUpdate()
+		if err != nil || !info.UpdateAvailable {
+			return
+		}
+		dialog := a.wailsApp.Dialog.Question()
+		dialog.SetTitle("Update available")
+		dialog.SetMessage(fmt.Sprintf(
+			"Monban %s is available.\nYou are running %s.",
+			info.LatestVersion, info.CurrentVersion,
+		))
+		dialog.AddButton("Get update").OnClick(func() {
+			_ = a.wailsApp.Browser.OpenURL(info.ReleaseURL)
+		})
+		later := dialog.AddButton("Later")
+		dialog.SetDefaultButton(later)
+		dialog.Show()
+	}()
+}
+
 func (a *App) CheckForUpdate() (UpdateInfo, error) {
 	info := UpdateInfo{CurrentVersion: Version}
 

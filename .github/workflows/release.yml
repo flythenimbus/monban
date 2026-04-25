@@ -62,12 +62,15 @@ jobs:
       - name: Package .app bundle
         working-directory: desktop
         run: |
+          # Strip leading "v" from tag (v0.5.0 -> 0.5.0) for the bundle plist.
+          VERSION=${GITHUB_REF_NAME#v}
+
           # Copy universal binary to bin/ where task expects it
           BINARY=$(find dist -name "Monban" -type f | head -1)
           mkdir -p bin
           cp "$BINARY" bin/Monban
 
-          task darwin:create:app:bundle
+          task darwin:create:app:bundle VERSION="$VERSION"
 
           # Zip the .app
           mkdir -p release
