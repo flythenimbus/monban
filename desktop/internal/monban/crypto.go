@@ -1,6 +1,7 @@
 package monban
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -11,12 +12,21 @@ import (
 
 const (
 	// ChunkSize is the plaintext size per encryption chunk.
-	ChunkSize = 64 * 1024 // 64 KB
+	// 1 MB chunks ~16x reduce GCM Seal/Open call overhead vs 64 KB
+	// while still bounded enough to stream without blowing memory.
+	// Old vaults with 64 KB chunks decrypt fine — chunk size is read
+	// from the header.
+	ChunkSize = 1024 * 1024 // 1 MB
 
 	// FileHeaderSize is the on-disk header: magic (4) + nonce (12) +
 	// chunk size (4). Per-chunk AAD carries a final-flag byte so the
 	// decrypter detects tail truncation.
 	FileHeaderSize = 20
+
+	// ioBufferSize sizes the bufio reader/writer wrappers around the
+	// source/destination files. One chunk's worth means bufio
+	// coalesces the per-chunk Write/Read into one syscall.
+	ioBufferSize = ChunkSize + 16
 )
 
 // fileMagic is the 4-byte marker at the start of every ciphertext.
@@ -72,6 +82,9 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 	}
 	defer func() { _ = dst.Close() }()
 
+	bufSrc := bufio.NewReaderSize(src, ioBufferSize)
+	bufDst := bufio.NewWriterSize(dst, ioBufferSize)
+
 	gcm, err := newGCM(key)
 	if err != nil {
 		return err
@@ -86,7 +99,7 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 	copy(header[0:4], fileMagic[:])
 	copy(header[4:16], fileNonce)
 	binary.BigEndian.PutUint32(header[16:20], ChunkSize)
-	if _, err := dst.Write(header); err != nil {
+	if _, err := bufDst.Write(header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 
@@ -106,14 +119,14 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 		aad := buildAAD(header, idx, isFinal)
 		chunkNonce := deriveChunkNonce(fileNonce, idx)
 		enc := gcm.Seal(nil, chunkNonce, payload, aad)
-		if _, err := dst.Write(enc); err != nil {
+		if _, err := bufDst.Write(enc); err != nil {
 			return fmt.Errorf("writing chunk %d: %w", idx, err)
 		}
 		return nil
 	}
 
 	for {
-		n, readErr := io.ReadFull(src, inbuf)
+		n, readErr := io.ReadFull(bufSrc, inbuf)
 		if n > 0 {
 			if held != nil {
 				if err := emit(held, heldIdx, false); err != nil {
@@ -144,7 +157,14 @@ func EncryptFile(key []byte, srcPath, dstPath string) error {
 		}
 	}
 
-	return dst.Sync()
+	if err := bufDst.Flush(); err != nil {
+		return fmt.Errorf("flushing buffer: %w", err)
+	}
+	// Per-file fsync removed: callers (LockFolder/LockFile) now batch
+	// fsync in chunks, then issue a final sync before deleting the
+	// originals. Per-file fsync was the dominant cost on vaults with
+	// many small files.
+	return nil
 }
 
 // DecryptFile decrypts srcPath to dstPath. Rejects any ciphertext
@@ -163,13 +183,16 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 	}
 	defer func() { _ = dst.Close() }()
 
+	bufSrc := bufio.NewReaderSize(src, ioBufferSize)
+	bufDst := bufio.NewWriterSize(dst, ioBufferSize)
+
 	gcm, err := newGCM(key)
 	if err != nil {
 		return err
 	}
 
 	header := make([]byte, FileHeaderSize)
-	if _, err := io.ReadFull(src, header); err != nil {
+	if _, err := io.ReadFull(bufSrc, header); err != nil {
 		return fmt.Errorf("reading header: %w", err)
 	}
 	var magic [4]byte
@@ -199,7 +222,7 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 	)
 
 	for {
-		n, readErr := io.ReadFull(src, buf)
+		n, readErr := io.ReadFull(bufSrc, buf)
 		if n > 0 {
 			sawAny = true
 			if held != nil {
@@ -207,7 +230,7 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 				if err != nil {
 					return fmt.Errorf("decrypting chunk %d: %w", heldIdx, err)
 				}
-				if _, err := dst.Write(pt); err != nil {
+				if _, err := bufDst.Write(pt); err != nil {
 					return fmt.Errorf("writing chunk %d: %w", heldIdx, err)
 				}
 			}
@@ -229,10 +252,10 @@ func DecryptFile(key []byte, srcPath, dstPath string) error {
 	if err != nil {
 		return ErrTruncatedCiphertext
 	}
-	if _, err := dst.Write(pt); err != nil {
+	if _, err := bufDst.Write(pt); err != nil {
 		return fmt.Errorf("writing final chunk: %w", err)
 	}
-	return nil
+	return bufDst.Flush()
 }
 
 // buildAAD constructs the additional-authenticated-data for a chunk.

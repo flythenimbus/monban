@@ -40,8 +40,9 @@ type Manifest struct {
 // LockFolder encrypts all files in folderPath into .monban-data/ with hashed names.
 // New and modified files are encrypted; unchanged files reuse their existing .enc.
 // Deleted files have their .enc removed. Originals are removed after encryption.
-// Uses a write-ahead journal for crash safety.
-func LockFolder(encKey []byte, folderPath string) error {
+// Uses a write-ahead journal for crash safety. The optional progress callback
+// is invoked once per processed file with the file's plaintext size.
+func LockFolder(encKey []byte, folderPath string, progress ProgressFunc) error {
 	if err := os.MkdirAll(dataDir(folderPath), 0700); err != nil {
 		return fmt.Errorf("creating data dir: %w", err)
 	}
@@ -64,7 +65,7 @@ func LockFolder(encKey []byte, folderPath string) error {
 		return fmt.Errorf("collecting files: %w", err)
 	}
 
-	manifest, err := encryptFilesIncremental(encKey, files, folderPath, prevEntries)
+	manifest, err := encryptFilesIncremental(encKey, files, folderPath, prevEntries, progress)
 	if err != nil {
 		return err
 	}
@@ -75,6 +76,12 @@ func LockFolder(encKey []byte, folderPath string) error {
 	if err := writeEncryptedManifest(encKey, folderPath, manifest); err != nil {
 		return err
 	}
+
+	// Durability gate: fsync every .enc and the data directory before
+	// originals are deleted. EncryptFile no longer fsyncs per file —
+	// chunked syncs in encryptFilesIncremental + this final sweep
+	// give the same crash-safety guarantee at a fraction of the cost.
+	fsyncDataDir(folderPath)
 
 	journal.State = "removing-originals"
 	if err := writeJournal(folderPath, journal); err != nil {
@@ -91,7 +98,9 @@ func LockFolder(encKey []byte, folderPath string) error {
 }
 
 // UnlockFolder decrypts all .enc files in folderPath back to their originals.
-func UnlockFolder(encKey []byte, folderPath string) error {
+// The optional progress callback is invoked once per processed file with
+// the file's plaintext size.
+func UnlockFolder(encKey []byte, folderPath string, progress ProgressFunc) error {
 	manifest, err := loadEncryptedManifest(encKey, folderPath)
 	if err != nil {
 		return err
@@ -107,7 +116,7 @@ func UnlockFolder(encKey []byte, folderPath string) error {
 		return fmt.Errorf("writing journal: %w", err)
 	}
 
-	if err := decryptFilesInPlace(encKey, manifest, folderPath); err != nil {
+	if err := decryptFilesInPlace(encKey, manifest, folderPath, progress); err != nil {
 		return err
 	}
 
@@ -187,8 +196,9 @@ func IsFileLocked(filePath string) bool {
 }
 
 // LockFile encrypts a single file into an opaque vault directory.
-// The original file is deleted after encryption.
-func LockFile(encKey []byte, filePath string) error {
+// The original file is deleted after encryption. The optional progress
+// callback is invoked once with the file's plaintext size.
+func LockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return fmt.Errorf("stat file: %w", err)
@@ -230,12 +240,20 @@ func LockFile(encKey []byte, filePath string) error {
 		return fmt.Errorf("writing manifest: %w", err)
 	}
 
+	// Durability gate: fsync the .enc before deleting the plaintext.
+	// EncryptFile no longer fsyncs per file (chunked sync handled by
+	// LockFolder); single-file vaults handle their own sync here.
+	_ = fsyncPath(encPath)
+
 	journal.State = "removing-originals"
 	if err := writeJournal(vaultDir, journal); err != nil {
 		return fmt.Errorf("updating journal: %w", err)
 	}
 
 	_ = os.Remove(filePath)
+	if progress != nil {
+		progress(info.Size())
+	}
 
 	journal.State = "complete"
 	_ = writeJournal(vaultDir, journal)
@@ -245,7 +263,8 @@ func LockFile(encKey []byte, filePath string) error {
 }
 
 // UnlockFile decrypts a single file from its vault directory.
-func UnlockFile(encKey []byte, filePath string) error {
+// The optional progress callback is invoked once with the file's plaintext size.
+func UnlockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 	vaultDir := fileVaultDir(filePath)
 
 	manifest, err := loadEncryptedManifest(encKey, vaultDir)
@@ -282,6 +301,9 @@ func UnlockFile(encKey []byte, filePath string) error {
 
 	_ = os.RemoveAll(vaultDir)
 
+	if progress != nil {
+		progress(entry.Size)
+	}
 	return nil
 }
 
@@ -355,6 +377,49 @@ func CountFiles(path string) (int, error) {
 		return nil
 	})
 	return count, err
+}
+
+// FolderStats walks path once and returns total file count and total bytes,
+// skipping monban metadata files and the .monban-data directory. Used by
+// progress reporting to compute totals before encryption begins.
+func FolderStats(path string) (files int64, bytes int64, err error) {
+	err = filepath.Walk(path, func(p string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			if info.Name() == ".monban-data" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := info.Name()
+		if name == ".monban-journal.json" || name == ".monban-manifest.enc" {
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		files++
+		bytes += info.Size()
+		return nil
+	})
+	return files, bytes, err
+}
+
+// ManifestStats returns file count and total plaintext bytes of the
+// encrypted manifest at folderPath. Used for unlock progress totals.
+// encKey may be nil or wrong — the result is (0, 0, err) in that case.
+func ManifestStats(encKey []byte, folderPath string) (files int64, bytes int64, err error) {
+	manifest, err := loadEncryptedManifest(encKey, folderPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, e := range manifest.Files {
+		files++
+		bytes += e.Size
+	}
+	return files, bytes, nil
 }
 
 // FormatBytes formats bytes as a human-readable string.

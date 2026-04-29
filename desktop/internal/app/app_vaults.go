@@ -82,7 +82,7 @@ func (a *App) RemoveFolder(folderPath string, pin string) error {
 	}
 
 	// Ensure files are decrypted
-	if err := monban.UnlockVaultEntry(a.encKey, sc.Vaults[idx]); err != nil {
+	if err := monban.UnlockVaultEntry(a.encKey, sc.Vaults[idx], nil); err != nil {
 		return err
 	}
 
@@ -133,7 +133,9 @@ func (a *App) DecryptLazyVault(path string, pin string) error {
 	decMode := a.secureCfg.VaultDecryptMode(absPath)
 
 	if decMode == monban.DecryptEager || decMode == monban.DecryptLazy {
-		if err := monban.UnlockVaultEntry(a.encKey, v); err != nil {
+		progress := a.maybeProgressForUnlock(a.encKey, v)
+		defer progress.Done()
+		if err := monban.UnlockVaultEntry(a.encKey, v, progress.Func()); err != nil {
 			return err
 		}
 		return nil
@@ -157,7 +159,9 @@ func (a *App) DecryptLazyVault(path string, pin string) error {
 	}
 	defer monban.ZeroBytes(lazyStrictKey)
 
-	if err := monban.UnlockVaultEntry(lazyStrictKey, v); err != nil {
+	progress := a.maybeProgressForUnlock(lazyStrictKey, v)
+	defer progress.Done()
+	if err := monban.UnlockVaultEntry(lazyStrictKey, v, progress.Func()); err != nil {
 		return err
 	}
 
@@ -190,6 +194,9 @@ func (a *App) LockVault(path string) error {
 	v := a.secureCfg.Vaults[idx]
 	mode := a.secureCfg.VaultDecryptMode(absPath)
 
+	progress := a.maybeProgressForLock(v)
+	defer progress.Done()
+
 	if mode == monban.DecryptLazyStrict {
 		hmacSalt, err := a.secureCfg.DecodeHmacSalt()
 		if err != nil {
@@ -199,13 +206,13 @@ func (a *App) LockVault(path string) error {
 		if err != nil {
 			return fmt.Errorf("deriving lazy strict key: %w", err)
 		}
-		if err := monban.LockVaultEntry(lazyKey, v); err != nil {
+		if err := monban.LockVaultEntry(lazyKey, v, progress.Func()); err != nil {
 			monban.ZeroBytes(lazyKey)
 			return err
 		}
 		monban.ZeroBytes(lazyKey)
 	} else {
-		if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+		if err := monban.LockVaultEntry(a.encKey, v, progress.Func()); err != nil {
 			return err
 		}
 	}
@@ -261,14 +268,14 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		// eager <-> lazy: no re-encryption needed, just update flag
 
 	case oldMode != monban.DecryptLazyStrict && newMode == monban.DecryptLazyStrict:
-		if err := monban.UnlockVaultEntry(a.encKey, v); err != nil {
+		if err := monban.UnlockVaultEntry(a.encKey, v, nil); err != nil {
 			return fmt.Errorf("decrypting vault for mode change: %w", err)
 		}
 		lazyStrictKey, err := monban.DeriveLazyStrictKey(masterSecret, hmacSalt, absPath)
 		if err != nil {
 			return fmt.Errorf("deriving lazy strict key: %w", err)
 		}
-		if err := monban.LockVaultEntry(lazyStrictKey, v); err != nil {
+		if err := monban.LockVaultEntry(lazyStrictKey, v, nil); err != nil {
 			monban.ZeroBytes(lazyStrictKey)
 			return fmt.Errorf("re-encrypting vault with lazy strict key: %w", err)
 		}
@@ -279,14 +286,14 @@ func (a *App) UpdateVaultMode(path string, mode string, pin string) error {
 		if err != nil {
 			return fmt.Errorf("deriving lazy strict key: %w", err)
 		}
-		if err := monban.UnlockVaultEntry(lazyStrictKey, v); err != nil {
+		if err := monban.UnlockVaultEntry(lazyStrictKey, v, nil); err != nil {
 			monban.ZeroBytes(lazyStrictKey)
 			return fmt.Errorf("decrypting vault from lazy strict: %w", err)
 		}
 		monban.ZeroBytes(lazyStrictKey)
 
 		if newMode == monban.DecryptLazy {
-			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+			if err := monban.LockVaultEntry(a.encKey, v, nil); err != nil {
 				return fmt.Errorf("re-encrypting vault with enc key: %w", err)
 			}
 		}

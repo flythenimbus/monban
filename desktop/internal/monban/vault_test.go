@@ -29,7 +29,7 @@ func TestLockUnlockRoundTrip(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatalf("lock failed: %v", err)
 	}
 
@@ -55,7 +55,7 @@ func TestLockUnlockRoundTrip(t *testing.T) {
 	}
 
 	// Unlock
-	if err := UnlockFolder(key, folder); err != nil {
+	if err := UnlockFolder(key, folder, nil); err != nil {
 		t.Fatalf("unlock failed: %v", err)
 	}
 
@@ -94,19 +94,19 @@ func TestLockIncrementalUnchanged(t *testing.T) {
 	key := makeTestKey()
 
 	// First lock
-	_ = LockFolder(key, folder)
-	_ = UnlockFolder(key, folder)
+	_ = LockFolder(key, folder, nil)
+	_ = UnlockFolder(key, folder, nil)
 
 	// Add a new file
 	_ = os.WriteFile(filepath.Join(folder, "new.txt"), []byte("new file"), 0600)
 
 	// Second lock — should encrypt new file, reuse existing .enc for unchanged
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatalf("incremental lock failed: %v", err)
 	}
 
 	// Unlock and verify all files present
-	_ = UnlockFolder(key, folder)
+	_ = UnlockFolder(key, folder, nil)
 
 	newContent, err := os.ReadFile(filepath.Join(folder, "new.txt"))
 	if err != nil {
@@ -128,20 +128,20 @@ func TestLockIncrementalModified(t *testing.T) {
 	key := makeTestKey()
 
 	// First lock
-	_ = LockFolder(key, folder)
-	_ = UnlockFolder(key, folder)
+	_ = LockFolder(key, folder, nil)
+	_ = UnlockFolder(key, folder, nil)
 
 	// Modify a file (change content and ensure mod time differs)
 	time.Sleep(10 * time.Millisecond)
 	_ = os.WriteFile(filepath.Join(folder, "file1.txt"), []byte("modified!"), 0600)
 
 	// Re-lock
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatalf("lock after modify failed: %v", err)
 	}
 
 	// Unlock and verify modification persisted
-	_ = UnlockFolder(key, folder)
+	_ = UnlockFolder(key, folder, nil)
 
 	data, _ := os.ReadFile(filepath.Join(folder, "file1.txt"))
 	if string(data) != "modified!" {
@@ -154,19 +154,19 @@ func TestLockDeletedFile(t *testing.T) {
 	key := makeTestKey()
 
 	// First lock
-	_ = LockFolder(key, folder)
-	_ = UnlockFolder(key, folder)
+	_ = LockFolder(key, folder, nil)
+	_ = UnlockFolder(key, folder, nil)
 
 	// Delete a file
 	_ = os.Remove(filepath.Join(folder, "file2.txt"))
 
 	// Re-lock — stale .enc should be cleaned up
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatalf("lock after delete failed: %v", err)
 	}
 
 	// Unlock — file2.txt should not exist
-	_ = UnlockFolder(key, folder)
+	_ = UnlockFolder(key, folder, nil)
 
 	if _, err := os.Stat(filepath.Join(folder, "file2.txt")); !os.IsNotExist(err) {
 		t.Error("deleted file should not reappear after unlock")
@@ -247,7 +247,7 @@ func TestRecoverFromJournalRemovingOriginals(t *testing.T) {
 	key := makeTestKey()
 
 	// Do a real lock first so .monban-data and manifest exist
-	_ = LockFolder(key, folder)
+	_ = LockFolder(key, folder, nil)
 
 	// Now simulate crash during "removing-originals" — journal says removing but
 	// some originals might still be around (shouldn't matter, they're already encrypted)
@@ -270,7 +270,7 @@ func TestRecoverFromJournalRemovingOriginals(t *testing.T) {
 	}
 
 	// Encrypted data should still be intact — can still unlock
-	if err := UnlockFolder(key, folder); err != nil {
+	if err := UnlockFolder(key, folder, nil); err != nil {
 		t.Fatalf("should still unlock after recovery: %v", err)
 	}
 }
@@ -280,10 +280,10 @@ func TestRecoverFromJournalRemovingEncrypted(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock then start unlocking
-	_ = LockFolder(key, folder)
+	_ = LockFolder(key, folder, nil)
 	// Decrypt files manually so they exist
 	manifest, _ := loadEncryptedManifest(key, folder)
-	_ = decryptFilesInPlace(key, manifest, folder)
+	_ = decryptFilesInPlace(key, manifest, folder, nil)
 
 	// Simulate crash during "removing-encrypted"
 	journal := &JournalState{
@@ -315,9 +315,9 @@ func TestUnlockWithWrongKey(t *testing.T) {
 	rightKey := makeTestKey()
 	wrongKey := bytes.Repeat([]byte{0x99}, 32)
 
-	_ = LockFolder(rightKey, folder)
+	_ = LockFolder(rightKey, folder, nil)
 
-	err := UnlockFolder(wrongKey, folder)
+	err := UnlockFolder(wrongKey, folder, nil)
 	if err == nil {
 		t.Error("unlock with wrong key should fail")
 	}
@@ -329,11 +329,11 @@ func TestLockEmptyFolder(t *testing.T) {
 	_ = os.MkdirAll(folder, 0700)
 	key := makeTestKey()
 
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatalf("locking empty folder should succeed: %v", err)
 	}
 
-	if err := UnlockFolder(key, folder); err != nil {
+	if err := UnlockFolder(key, folder, nil); err != nil {
 		t.Fatalf("unlocking empty folder should succeed: %v", err)
 	}
 }
@@ -346,8 +346,8 @@ func TestLockPreservesFilePermissions(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(folder, "readonly.txt"), []byte("ro"), 0444)
 
 	key := makeTestKey()
-	_ = LockFolder(key, folder)
-	_ = UnlockFolder(key, folder)
+	_ = LockFolder(key, folder, nil)
+	_ = UnlockFolder(key, folder, nil)
 
 	info1, _ := os.Stat(filepath.Join(folder, "exec.sh"))
 	if info1.Mode().Perm() != 0755 {
@@ -464,10 +464,10 @@ func TestLockMultipleCycles(t *testing.T) {
 	key := makeTestKey()
 
 	for i := 0; i < 5; i++ {
-		if err := LockFolder(key, folder); err != nil {
+		if err := LockFolder(key, folder, nil); err != nil {
 			t.Fatalf("lock cycle %d failed: %v", i, err)
 		}
-		if err := UnlockFolder(key, folder); err != nil {
+		if err := UnlockFolder(key, folder, nil); err != nil {
 			t.Fatalf("unlock cycle %d failed: %v", i, err)
 		}
 	}
@@ -494,7 +494,7 @@ func TestLockUnlockFileRoundTrip(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock
-	if err := LockFile(key, path); err != nil {
+	if err := LockFile(key, path, nil); err != nil {
 		t.Fatalf("lock file failed: %v", err)
 	}
 
@@ -526,7 +526,7 @@ func TestLockUnlockFileRoundTrip(t *testing.T) {
 	}
 
 	// Unlock
-	if err := UnlockFile(key, path); err != nil {
+	if err := UnlockFile(key, path, nil); err != nil {
 		t.Fatalf("unlock file failed: %v", err)
 	}
 
@@ -556,8 +556,8 @@ func TestLockFilePreservesPermissions(t *testing.T) {
 	_ = os.WriteFile(path, []byte("#!/bin/sh\necho hi"), 0755)
 
 	key := makeTestKey()
-	_ = LockFile(key, path)
-	_ = UnlockFile(key, path)
+	_ = LockFile(key, path, nil)
+	_ = UnlockFile(key, path, nil)
 
 	info, err := os.Stat(path)
 	if err != nil {
@@ -574,8 +574,8 @@ func TestLockFilePreservesModTime(t *testing.T) {
 	_ = os.Chtimes(path, fixedTime, fixedTime)
 
 	key := makeTestKey()
-	_ = LockFile(key, path)
-	_ = UnlockFile(key, path)
+	_ = LockFile(key, path, nil)
+	_ = UnlockFile(key, path, nil)
 
 	info, _ := os.Stat(path)
 	if !info.ModTime().Equal(fixedTime) {
@@ -588,9 +588,9 @@ func TestLockFileWrongKey(t *testing.T) {
 	rightKey := makeTestKey()
 	wrongKey := bytes.Repeat([]byte{0x99}, 32)
 
-	_ = LockFile(rightKey, path)
+	_ = LockFile(rightKey, path, nil)
 
-	err := UnlockFile(wrongKey, path)
+	err := UnlockFile(wrongKey, path, nil)
 	if err == nil {
 		t.Error("unlock with wrong key should fail")
 	}
@@ -601,10 +601,10 @@ func TestLockFileMultipleCycles(t *testing.T) {
 	key := makeTestKey()
 
 	for i := 0; i < 5; i++ {
-		if err := LockFile(key, path); err != nil {
+		if err := LockFile(key, path, nil); err != nil {
 			t.Fatalf("lock cycle %d failed: %v", i, err)
 		}
-		if err := UnlockFile(key, path); err != nil {
+		if err := UnlockFile(key, path, nil); err != nil {
 			t.Fatalf("unlock cycle %d failed: %v", i, err)
 		}
 	}
@@ -659,7 +659,7 @@ func TestRecoverFileFromJournalRemovingEncrypted(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock, then decrypt manually, then simulate crash during "removing-encrypted"
-	_ = LockFile(key, path)
+	_ = LockFile(key, path, nil)
 	vaultDir := fileVaultDir(path)
 	_ = DecryptFile(key, filepath.Join(vaultDir, "data.enc"), path)
 
@@ -703,8 +703,8 @@ func TestLockFileLargeContent(t *testing.T) {
 	_ = os.WriteFile(path, content, 0600)
 
 	key := makeTestKey()
-	_ = LockFile(key, path)
-	_ = UnlockFile(key, path)
+	_ = LockFile(key, path, nil)
+	_ = UnlockFile(key, path, nil)
 
 	data, _ := os.ReadFile(path)
 	if !bytes.Equal(data, content) {
@@ -739,17 +739,17 @@ func TestLockWithOneKeyUnlockWithAnother(t *testing.T) {
 	lazyKey, _ := DeriveLazyStrictKey(master, salt, folder)
 
 	// Lock with lazyStrictKey
-	if err := LockFolder(lazyKey, folder); err != nil {
+	if err := LockFolder(lazyKey, folder, nil); err != nil {
 		t.Fatalf("lock with lazy key failed: %v", err)
 	}
 
 	// Unlock with encKey should fail (wrong key)
-	if err := UnlockFolder(encKey, folder); err == nil {
+	if err := UnlockFolder(encKey, folder, nil); err == nil {
 		t.Error("unlock with encKey should fail for lazy-strict-encrypted vault")
 	}
 
 	// Unlock with correct lazyStrictKey should succeed
-	if err := UnlockFolder(lazyKey, folder); err != nil {
+	if err := UnlockFolder(lazyKey, folder, nil); err != nil {
 		t.Fatalf("unlock with lazy key failed: %v", err)
 	}
 
@@ -766,7 +766,7 @@ func TestLockFileWithLazyStrictKey(t *testing.T) {
 
 	lazyKey, _ := DeriveLazyStrictKey(master, salt, path)
 
-	if err := LockFile(lazyKey, path); err != nil {
+	if err := LockFile(lazyKey, path, nil); err != nil {
 		t.Fatalf("lock file with lazy key failed: %v", err)
 	}
 
@@ -774,7 +774,7 @@ func TestLockFileWithLazyStrictKey(t *testing.T) {
 		t.Error("file should be locked")
 	}
 
-	if err := UnlockFile(lazyKey, path); err != nil {
+	if err := UnlockFile(lazyKey, path, nil); err != nil {
 		t.Fatalf("unlock file with lazy key failed: %v", err)
 	}
 
@@ -794,27 +794,27 @@ func TestReencryptFolderWithDifferentKey(t *testing.T) {
 	lazyKey, _ := DeriveLazyStrictKey(master, salt, folder)
 
 	// Start encrypted with encKey
-	if err := LockFolder(encKey, folder); err != nil {
+	if err := LockFolder(encKey, folder, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// Decrypt with encKey
-	if err := UnlockFolder(encKey, folder); err != nil {
+	if err := UnlockFolder(encKey, folder, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// Re-encrypt with lazyStrictKey
-	if err := LockFolder(lazyKey, folder); err != nil {
+	if err := LockFolder(lazyKey, folder, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// encKey should not work anymore
-	if err := UnlockFolder(encKey, folder); err == nil {
+	if err := UnlockFolder(encKey, folder, nil); err == nil {
 		t.Error("old encKey should not decrypt after re-encryption with lazy key")
 	}
 
 	// lazyStrictKey should work
-	if err := UnlockFolder(lazyKey, folder); err != nil {
+	if err := UnlockFolder(lazyKey, folder, nil); err != nil {
 		t.Fatalf("lazy key should decrypt after re-encryption: %v", err)
 	}
 
@@ -833,22 +833,22 @@ func TestReencryptFileWithDifferentKey(t *testing.T) {
 	lazyKey, _ := DeriveLazyStrictKey(master, salt, path)
 
 	// Encrypt with encKey
-	if err := LockFile(encKey, path); err != nil {
+	if err := LockFile(encKey, path, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// Decrypt with encKey
-	if err := UnlockFile(encKey, path); err != nil {
+	if err := UnlockFile(encKey, path, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// Re-encrypt with lazyStrictKey
-	if err := LockFile(lazyKey, path); err != nil {
+	if err := LockFile(lazyKey, path, nil); err != nil {
 		t.Fatal(err)
 	}
 
 	// lazyStrictKey should work
-	if err := UnlockFile(lazyKey, path); err != nil {
+	if err := UnlockFile(lazyKey, path, nil); err != nil {
 		t.Fatalf("lazy key should work: %v", err)
 	}
 
@@ -940,10 +940,10 @@ func TestLockFolderIgnoresSymlinks(t *testing.T) {
 	_ = os.Symlink(outside, filepath.Join(folder, "escape.txt"))
 
 	key := makeTestKey()
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatalf("lock failed: %v", err)
 	}
-	if err := UnlockFolder(key, folder); err != nil {
+	if err := UnlockFolder(key, folder, nil); err != nil {
 		t.Fatalf("unlock failed: %v", err)
 	}
 
@@ -980,6 +980,14 @@ func TestValidateManifestPathRejectsTraversal(t *testing.T) {
 		{"/etc/passwd", true},
 		{"..", true},
 		{"sub/../../outside", true},
+		// Filenames with literal double dots are NOT traversal — only
+		// a component equal to ".." is. Regression for vaults that
+		// contained files like "Calgary South Inc..pdf" which a
+		// previous substring check incorrectly rejected on unlock.
+		{"Calgary South Inc..pdf", false},
+		{"Webvana/2024:2025/foo..pdf", false},
+		{"...hidden", false},
+		{"foo..bar/baz", false},
 	}
 
 	for _, tt := range tests {
@@ -1013,7 +1021,7 @@ func TestDecryptRejectsTraversalInManifest(t *testing.T) {
 		},
 	}
 
-	err := decryptFilesInPlace(key, manifest, folder)
+	err := decryptFilesInPlace(key, manifest, folder, nil)
 	if err == nil {
 		t.Error("decryption should fail with path traversal in manifest")
 	}
@@ -1109,7 +1117,7 @@ func TestRecoverFromJournalDecryptingCleansPartialFiles(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock the folder so encrypted data exists
-	if err := LockFolder(key, folder); err != nil {
+	if err := LockFolder(key, folder, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1150,7 +1158,7 @@ func TestRecoverFromJournalDecryptingCleansPartialFiles(t *testing.T) {
 		t.Error("vault should still be locked after recovery")
 	}
 
-	if err := UnlockFolder(key, folder); err != nil {
+	if err := UnlockFolder(key, folder, nil); err != nil {
 		t.Fatalf("should still unlock after recovery: %v", err)
 	}
 
@@ -1166,7 +1174,7 @@ func TestRecoverFileFromJournalDecryptingCleansPartialFile(t *testing.T) {
 	key := makeTestKey()
 
 	// Lock the file
-	if err := LockFile(key, path); err != nil {
+	if err := LockFile(key, path, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1197,7 +1205,7 @@ func TestRecoverFileFromJournalDecryptingCleansPartialFile(t *testing.T) {
 	}
 
 	// Should unlock cleanly
-	if err := UnlockFile(key, path); err != nil {
+	if err := UnlockFile(key, path, nil); err != nil {
 		t.Fatalf("should unlock after recovery: %v", err)
 	}
 

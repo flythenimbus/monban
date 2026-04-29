@@ -14,20 +14,27 @@ import (
 	"time"
 )
 
+// ProgressFunc reports per-file completion during lock/unlock. The callback
+// is invoked once per processed file (encrypted or decrypted), with the
+// file's plaintext size in bytes. May be called concurrently from multiple
+// workers; implementations must be safe under that. May be nil.
+type ProgressFunc func(fileBytes int64)
+
 // LockVaultEntry locks a single vault entry (file or folder), skipping if already locked.
-func LockVaultEntry(encKey []byte, v VaultEntry) error {
+// The optional progress callback is invoked once per processed file.
+func LockVaultEntry(encKey []byte, v VaultEntry, progress ProgressFunc) error {
 	if v.IsFile() {
 		if IsFileLocked(v.Path) {
 			return nil
 		}
-		if err := LockFile(encKey, v.Path); err != nil {
+		if err := LockFile(encKey, v.Path, progress); err != nil {
 			return fmt.Errorf("locking file %s: %w", v.Label, err)
 		}
 	} else {
 		if IsLocked(v.Path) {
 			return nil
 		}
-		if err := LockFolder(encKey, v.Path); err != nil {
+		if err := LockFolder(encKey, v.Path, progress); err != nil {
 			return fmt.Errorf("locking vault %s: %w", v.Label, err)
 		}
 	}
@@ -35,19 +42,20 @@ func LockVaultEntry(encKey []byte, v VaultEntry) error {
 }
 
 // UnlockVaultEntry unlocks a single vault entry (file or folder), skipping if already unlocked.
-func UnlockVaultEntry(encKey []byte, v VaultEntry) error {
+// The optional progress callback is invoked once per processed file.
+func UnlockVaultEntry(encKey []byte, v VaultEntry, progress ProgressFunc) error {
 	if v.IsFile() {
 		if !IsFileLocked(v.Path) {
 			return nil
 		}
-		if err := UnlockFile(encKey, v.Path); err != nil {
+		if err := UnlockFile(encKey, v.Path, progress); err != nil {
 			return fmt.Errorf("unlocking file %s: %w", v.Label, err)
 		}
 	} else {
 		if !IsLocked(v.Path) {
 			return nil
 		}
-		if err := UnlockFolder(encKey, v.Path); err != nil {
+		if err := UnlockFolder(encKey, v.Path, progress); err != nil {
 			return fmt.Errorf("unlocking vault %s: %w", v.Label, err)
 		}
 	}
@@ -219,15 +227,26 @@ func fileUnchanged(fi fileInfo, prev ManifestEntry) bool {
 }
 
 // encryptFilesIncremental encrypts only new or modified files. Unchanged files
-// reuse their existing .enc from the previous lock.
-func encryptFilesIncremental(encKey []byte, files []fileInfo, folderPath string, prev map[string]ManifestEntry) (*Manifest, error) {
+// reuse their existing .enc from the previous lock. progress (may be nil) is
+// invoked once per processed file with the file's plaintext size.
+//
+// Chunked fsync: every syncEveryFiles completed encryptions, the worker
+// fsyncs its just-written .enc. This spreads the durability cost across
+// the run so the final pre-removeOriginals fsync sweep has less work.
+// Until the originals are removed, unsynced .enc files don't represent
+// data loss risk — recovery rolls back the partial state.
+func encryptFilesIncremental(encKey []byte, files []fileInfo, folderPath string, prev map[string]ManifestEntry, progress ProgressFunc) (*Manifest, error) {
 	manifest := &Manifest{Version: 1, Files: make([]ManifestEntry, len(files))}
+	var doneCount atomic.Int64
 	err := parallelOp(files, func(idx int, fi fileInfo) error {
 		encName := hashedEncName(fi.relPath)
 
 		if prev != nil {
 			if prevEntry, ok := prev[fi.relPath]; ok && fileUnchanged(fi, prevEntry) {
 				manifest.Files[idx] = prevEntry
+				if progress != nil {
+					progress(fi.size)
+				}
 				return nil
 			}
 		}
@@ -243,6 +262,13 @@ func encryptFilesIncremental(encKey []byte, files []fileInfo, folderPath string,
 			Size:    fi.size,
 			Mode:    fi.mode,
 			ModTime: fi.modTime,
+		}
+
+		if doneCount.Add(1)%syncEveryFiles == 0 {
+			_ = fsyncPath(encPath)
+		}
+		if progress != nil {
+			progress(fi.size)
 		}
 		return nil
 	})
@@ -272,8 +298,9 @@ func cleanupStaleEncFiles(current *Manifest, prev map[string]ManifestEntry, fold
 }
 
 // decryptFilesInPlace decrypts files from .monban-data/ back to their original paths.
-// Manifest paths are validated to prevent path traversal attacks.
-func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) error {
+// Manifest paths are validated to prevent path traversal attacks. progress (may
+// be nil) is invoked once per decrypted file with the file's plaintext size.
+func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string, progress ProgressFunc) error {
 	cleanRoot := filepath.Clean(folderPath)
 	for _, e := range manifest.Files {
 		if err := validateManifestPath(e.Path, cleanRoot); err != nil {
@@ -294,34 +321,67 @@ func decryptFilesInPlace(encKey []byte, manifest *Manifest, folderPath string) e
 
 		_ = os.Chmod(dstPath, e.Mode)
 		_ = os.Chtimes(dstPath, e.ModTime, e.ModTime)
+		if progress != nil {
+			progress(e.Size)
+		}
 		return nil
 	})
 }
 
-// parallelOp runs fn over items concurrently with up to runtime.NumCPU() workers.
-// Returns the first error encountered; in-flight workers skip their work once
-// an error is recorded. Parallelism only (no ordering guarantees), though fn
-// receives the original slice index.
+// syncEveryFiles is the chunked-fsync batch size. Every Nth completed
+// encryption gets its .enc fsynced inside the worker, spreading the
+// durability cost across the run instead of one big sweep at the end.
+const syncEveryFiles = 32
+
+// parallelOp runs fn over items concurrently with a fixed pool of
+// runtime.NumCPU() workers pulling from an index channel. Earlier
+// versions spawned one goroutine per item up front and gated them
+// on a semaphore, which OOMed (or, on macOS, made the runtime hang
+// for tens of seconds) when locking vaults containing tens of
+// thousands of small files. A fixed pool keeps memory bounded.
+//
+// Returns the first error encountered; once an error is recorded
+// the producer stops feeding new indices and in-flight workers
+// drain quickly. fn receives the original slice index for ordered
+// writes into a shared output slice.
 func parallelOp[T any](items []T, fn func(idx int, item T) error) error {
+	if len(items) == 0 {
+		return nil
+	}
+	workers := runtime.NumCPU()
+	if workers > len(items) {
+		workers = len(items)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
 	var firstErr atomic.Value
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, runtime.NumCPU())
+	indices := make(chan int, workers*2)
 
-	for i, it := range items {
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
-		go func(idx int, item T) {
+		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			if firstErr.Load() != nil {
-				return
+			for idx := range indices {
+				if firstErr.Load() != nil {
+					continue // drain; let producer finish & close channel
+				}
+				if err := fn(idx, items[idx]); err != nil {
+					firstErr.Store(err)
+				}
 			}
-			if err := fn(idx, item); err != nil {
-				firstErr.Store(err)
-			}
-		}(i, it)
+		}()
 	}
+
+	for i := range items {
+		if firstErr.Load() != nil {
+			break
+		}
+		indices <- i
+	}
+	close(indices)
 	wg.Wait()
 
 	if v := firstErr.Load(); v != nil {
@@ -330,14 +390,57 @@ func parallelOp[T any](items []T, fn func(idx int, item T) error) error {
 	return nil
 }
 
+// fsyncPath opens path read-only, fsyncs it, and closes it. Used for
+// the chunked-fsync batches inside encryptFilesIncremental. Best
+// effort — caller ignores errors because the final pre-removeOriginals
+// sweep will retry.
+func fsyncPath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	return f.Sync()
+}
+
+// fsyncDataDir walks folderPath/.monban-data and fsyncs every .enc
+// file plus the directory itself. Called once per LockFolder right
+// before the journal advances to "removing-originals" — the durability
+// gate before plaintext is deleted. Most files are already synced by
+// the chunked-sync inside the encryption loop, so the final sweep is
+// usually cheap.
+func fsyncDataDir(folderPath string) {
+	dir := dataDir(folderPath)
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		_ = fsyncPath(path)
+		return nil
+	})
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+}
+
 // validateManifestPath checks that a manifest entry path is safe: no absolute
-// paths, no ".." traversal, and the resolved path stays within the vault root.
+// paths, no ".." path components, and the resolved path stays within the
+// vault root.
+//
+// Earlier versions used strings.Contains(relPath, "..") as the traversal
+// check, which produced false positives for legitimate filenames containing
+// double dots — e.g. "Calgary South Inc..pdf" — and refused to decrypt
+// vaults that had been locked containing such files. We now check that no
+// path *component* equals "..", which is the actual escape primitive.
 func validateManifestPath(relPath string, cleanRoot string) error {
 	if filepath.IsAbs(relPath) {
 		return fmt.Errorf("absolute path not allowed")
 	}
-	if strings.Contains(relPath, "..") {
-		return fmt.Errorf("path traversal not allowed")
+	for _, comp := range strings.Split(filepath.ToSlash(relPath), "/") {
+		if comp == ".." {
+			return fmt.Errorf("path traversal not allowed")
+		}
 	}
 	resolved := filepath.Join(cleanRoot, relPath)
 	if !strings.HasPrefix(filepath.Clean(resolved), cleanRoot+string(filepath.Separator)) &&
@@ -450,4 +553,11 @@ func fileVaultDir(filePath string) string {
 	h := sha256.Sum256([]byte(filePath))
 	name := ".monban-" + hex.EncodeToString(h[:8])
 	return filepath.Join(filepath.Dir(filePath), name)
+}
+
+// FileVaultDirOf is the exported variant of fileVaultDir, used by callers
+// outside this package that need to read the encrypted manifest of a
+// single-file vault (e.g. progress reporting computing totals).
+func FileVaultDirOf(filePath string) string {
+	return fileVaultDir(filePath)
 }

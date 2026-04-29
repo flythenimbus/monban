@@ -1,6 +1,7 @@
 import { Events } from "@wailsio/runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { VaultProgressOverlay } from "./components";
 import { Lock } from "./components/icons/Lock";
 import { AdminPanel } from "./screens/AdminPanel/AdminPanel";
 import {
@@ -153,6 +154,7 @@ function App() {
 	return (
 		<>
 			{body}
+			<VaultProgressOverlay />
 			{secondTouchPlugin && (
 				<SecondTouchOverlay pluginName={secondTouchPlugin} />
 			)}

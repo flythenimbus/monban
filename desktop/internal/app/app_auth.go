@@ -223,12 +223,44 @@ func (a *App) Unlock(pin string) error {
 		return gateErr
 	}
 
+	// Pre-walk eager vaults to compute total files/bytes for progress.
+	// Skipped vaults (lazy/lazy_strict) aren't in the totals.
+	var (
+		totalFiles int64
+		totalBytes int64
+	)
+	for _, v := range sc.Vaults {
+		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
+			continue
+		}
+		if v.IsFile() {
+			if !monban.IsFileLocked(v.Path) {
+				continue
+			}
+			f, b, _ := monban.ManifestStats(encKey, monban.FileVaultDirOf(v.Path))
+			totalFiles += f
+			totalBytes += b
+		} else {
+			if !monban.IsLocked(v.Path) {
+				continue
+			}
+			f, b, _ := monban.ManifestStats(encKey, v.Path)
+			totalFiles += f
+			totalBytes += b
+		}
+	}
+	progress := newProgressEmitter(a.window, "unlock", totalFiles, totalBytes)
+	if totalFiles > 0 {
+		progress.EmitStart()
+	}
+	defer progress.Done()
+
 	// Unlock all eager vaults
 	for _, v := range sc.Vaults {
 		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
 			continue
 		}
-		if err := monban.UnlockVaultEntry(encKey, v); err != nil {
+		if err := monban.UnlockVaultEntry(encKey, v, progress.Func()); err != nil {
 			return err
 		}
 	}
@@ -275,6 +307,38 @@ func (a *App) Lock() error {
 		return err
 	}
 
+	// Pre-walk to compute progress totals. Skip vaults that are
+	// already locked (no work) and stop walking on first error
+	// (best-effort — a missing/permission-denied vault still gets
+	// counted as zero, so the bar may overshoot rather than freeze).
+	var (
+		totalFiles int64
+		totalBytes int64
+	)
+	for _, v := range a.secureCfg.Vaults {
+		if v.IsFile() {
+			if monban.IsFileLocked(v.Path) {
+				continue
+			}
+			if info, statErr := os.Stat(v.Path); statErr == nil {
+				totalFiles++
+				totalBytes += info.Size()
+			}
+		} else {
+			if monban.IsLocked(v.Path) {
+				continue
+			}
+			f, b, _ := monban.FolderStats(v.Path)
+			totalFiles += f
+			totalBytes += b
+		}
+	}
+	progress := newProgressEmitter(a.window, "lock", totalFiles, totalBytes)
+	if totalFiles > 0 {
+		progress.EmitStart()
+	}
+	defer progress.Done()
+
 	var lockErr error
 	for _, v := range a.secureCfg.Vaults {
 		mode := a.secureCfg.VaultDecryptMode(v.Path)
@@ -284,14 +348,14 @@ func (a *App) Lock() error {
 				lockErr = fmt.Errorf("deriving lazy strict key: %w", err)
 				break
 			}
-			if err := monban.LockVaultEntry(lazyKey, v); err != nil {
+			if err := monban.LockVaultEntry(lazyKey, v, progress.Func()); err != nil {
 				monban.ZeroBytes(lazyKey)
 				lockErr = err
 				break
 			}
 			monban.ZeroBytes(lazyKey)
 		} else {
-			if err := monban.LockVaultEntry(a.encKey, v); err != nil {
+			if err := monban.LockVaultEntry(a.encKey, v, progress.Func()); err != nil {
 				lockErr = err
 				break
 			}
