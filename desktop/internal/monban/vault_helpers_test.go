@@ -178,7 +178,7 @@ func findSubstr(s, sub string) bool {
 	return false
 }
 
-func TestLockVaultEntrySkipsAlreadyLocked(t *testing.T) {
+func TestVaultLockSkipsAlreadyLocked(t *testing.T) {
 	folder := createTestFolder(t)
 	key := makeTestKey()
 
@@ -190,39 +190,40 @@ func TestLockVaultEntrySkipsAlreadyLocked(t *testing.T) {
 	v := VaultEntry{Label: "test", Path: folder}
 
 	// Locking again should be a no-op (not an error)
-	if err := LockVaultEntry(key, v, nil); err != nil {
+	if err := VaultFor(v).Lock(key, nil); err != nil {
 		t.Errorf("locking already-locked vault should not error: %v", err)
 	}
 }
 
-func TestUnlockVaultEntrySkipsAlreadyUnlocked(t *testing.T) {
+func TestVaultUnlockSkipsAlreadyUnlocked(t *testing.T) {
 	folder := createTestFolder(t)
 	key := makeTestKey()
 
 	v := VaultEntry{Label: "test", Path: folder}
 
 	// Folder is already unlocked (never locked)
-	if err := UnlockVaultEntry(key, v, nil); err != nil {
+	if err := VaultFor(v).Unlock(key, nil); err != nil {
 		t.Errorf("unlocking already-unlocked vault should not error: %v", err)
 	}
 }
 
-func TestLockUnlockVaultEntryFile(t *testing.T) {
+func TestVaultLockUnlockFile(t *testing.T) {
 	path := createTestFile(t)
 	key := makeTestKey()
 
 	v := VaultEntry{Label: "secret", Path: path, Type: "file"}
+	vault := VaultFor(v)
 
-	if err := LockVaultEntry(key, v, nil); err != nil {
-		t.Fatalf("lock file vault entry failed: %v", err)
+	if err := vault.Lock(key, nil); err != nil {
+		t.Fatalf("lock file vault failed: %v", err)
 	}
 
 	if !IsFileLocked(path) {
 		t.Error("file should be locked")
 	}
 
-	if err := UnlockVaultEntry(key, v, nil); err != nil {
-		t.Fatalf("unlock file vault entry failed: %v", err)
+	if err := vault.Unlock(key, nil); err != nil {
+		t.Fatalf("unlock file vault failed: %v", err)
 	}
 
 	if IsFileLocked(path) {
@@ -508,7 +509,7 @@ func bytes64(seed string) []byte {
 	return out
 }
 
-func TestLockVaultEntryWithLazyStrictKey(t *testing.T) {
+func TestVaultLockUnlockWithLazyStrictKey(t *testing.T) {
 	folder := createTestFolder(t)
 	master := makeTestKey() // reuse as master for simplicity
 	salt := make([]byte, 32)
@@ -519,8 +520,9 @@ func TestLockVaultEntryWithLazyStrictKey(t *testing.T) {
 	}
 
 	v := VaultEntry{Label: "test", Path: folder}
+	vault := VaultFor(v)
 
-	if err := LockVaultEntry(lazyKey, v, nil); err != nil {
+	if err := vault.Lock(lazyKey, nil); err != nil {
 		t.Fatalf("lock with lazy key failed: %v", err)
 	}
 
@@ -528,7 +530,7 @@ func TestLockVaultEntryWithLazyStrictKey(t *testing.T) {
 		t.Error("folder should be locked")
 	}
 
-	if err := UnlockVaultEntry(lazyKey, v, nil); err != nil {
+	if err := vault.Unlock(lazyKey, nil); err != nil {
 		t.Fatalf("unlock with lazy key failed: %v", err)
 	}
 

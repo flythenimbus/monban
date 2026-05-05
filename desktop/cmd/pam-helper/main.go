@@ -208,7 +208,7 @@ func assertFIDO2(tty *os.File, cfgPath, pin string) error {
 		ttyPrint(tty, "✗ no matching registered key\n")
 		return fmt.Errorf("unwrap master secret: %w", err)
 	}
-	defer monban.ZeroBytes(masterSecret)
+	defer masterSecret.Zero()
 
 	// Belt+suspenders: UnwrapMasterSecret iterated the full credential
 	// list (needed so VerifySecureConfig's HMAC matches later). In
@@ -229,7 +229,7 @@ func assertFIDO2(tty *os.File, cfgPath, pin string) error {
 	// A modified credentials.json produces a mismatching HMAC and we
 	// refuse even when the key physically authenticated, because
 	// something outside Monban has been editing the config.
-	if err := monban.VerifySecureConfig(sc, masterSecret, hmacSalt); err != nil {
+	if err := masterSecret.VerifyConfig(sc, hmacSalt); err != nil {
 		if err == monban.ErrConfigTampered {
 			ttyPrint(tty, "✗ monban config has been tampered with — open Monban to investigate\n")
 			return fmt.Errorf("%w", err)

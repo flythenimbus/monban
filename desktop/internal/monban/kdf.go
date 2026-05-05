@@ -35,10 +35,16 @@ func DeriveConfigAuthKey(masterSecret, hmacSalt []byte) ([]byte, error) {
 	return hkdfKey(masterSecret, hmacSalt, []byte("monban-config-auth-v1"), "config auth")
 }
 
-// GenerateMasterSecret generates a random 64-byte master secret.
-// This secret is wrapped by each security key's hmac-secret derived key.
-func GenerateMasterSecret() ([]byte, error) {
-	return randomBytes(64, "master secret")
+// GenerateMasterSecret generates a random 64-byte master secret and
+// returns it wrapped in a typed MasterSecret. The wrapper owns the
+// bytes; callers should defer Zero() and never reach for the raw
+// slice.
+func GenerateMasterSecret() (*MasterSecret, error) {
+	b, err := randomBytes(64, "master secret")
+	if err != nil {
+		return nil, err
+	}
+	return WrapMasterSecret(b), nil
 }
 
 // GenerateHmacSalt generates a 32-byte random salt for FIDO2 hmac-secret.

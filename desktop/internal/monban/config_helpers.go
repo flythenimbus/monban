@@ -41,8 +41,10 @@ func (c *CredentialEntry) DecodePublicKey() (pubX, pubY []byte, err error) {
 }
 
 // UnwrapMasterSecret tries each credential's wrapped key until one succeeds.
-// Returns the unwrapped master secret and the matched credential entry.
-func UnwrapMasterSecret(sc *SecureConfig, wrappingKey []byte) ([]byte, *CredentialEntry, error) {
+// Returns the unwrapped master secret as a typed handle and the matched
+// credential entry. Caller owns the returned *MasterSecret and is
+// responsible for Zero()-ing it.
+func UnwrapMasterSecret(sc *SecureConfig, wrappingKey []byte) (*MasterSecret, *CredentialEntry, error) {
 	for i := range sc.Credentials {
 		wrapped, err := DecodeB64(sc.Credentials[i].WrappedKey)
 		if err != nil {
@@ -52,7 +54,7 @@ func UnwrapMasterSecret(sc *SecureConfig, wrappingKey []byte) ([]byte, *Credenti
 		if err != nil {
 			continue
 		}
-		return secret, &sc.Credentials[i], nil
+		return WrapMasterSecret(secret), &sc.Credentials[i], nil
 	}
 	return nil, nil, fmt.Errorf("could not unwrap master secret — no matching credential found")
 }

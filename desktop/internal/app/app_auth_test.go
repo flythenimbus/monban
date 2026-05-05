@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	"monban/internal/monban"
 )
 
 func TestLock_NilConfig(t *testing.T) {
@@ -20,11 +22,8 @@ func TestLock_NilConfig(t *testing.T) {
 
 func TestLock_NilConfig_PreservesSecrets(t *testing.T) {
 	a := NewApp()
-	a.masterSecret = make([]byte, 64)
+	a.masterSecret = monban.WrapMasterSecret(make([]byte, 64))
 	a.encKey = make([]byte, 32)
-	for i := range a.masterSecret {
-		a.masterSecret[i] = 0x42
-	}
 	for i := range a.encKey {
 		a.encKey[i] = 0x42
 	}

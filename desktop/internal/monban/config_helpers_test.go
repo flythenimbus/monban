@@ -162,7 +162,7 @@ func TestUnwrapMasterSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(secret, masterSecret) {
+	if !bytes.Equal(secret.bytes, masterSecret) {
 		t.Error("unwrapped secret doesn't match original")
 	}
 	if cred.Label != "Key 1" {
@@ -198,7 +198,7 @@ func TestUnwrapMasterSecretMultipleCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(secret, masterSecret) {
+	if !bytes.Equal(secret.bytes, masterSecret) {
 		t.Error("unwrapped secret doesn't match")
 	}
 	if cred.Label != "Correct Key" {

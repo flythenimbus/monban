@@ -13,11 +13,13 @@ import (
 // --- Types ---
 
 // JournalState tracks the progress of a lock/unlock operation for crash recovery.
+// Operation and State use typed string constants from journal_recovery.go so
+// forward-path writes and recovery-path reads can't drift apart.
 type JournalState struct {
-	Operation string    `json:"operation"` // "lock" or "unlock"
-	Folder    string    `json:"folder"`    // protected folder path
-	State     string    `json:"state"`     // "encrypting", "removing-originals", "decrypting", "removing-encrypted", "complete"
-	Timestamp time.Time `json:"timestamp"`
+	Operation JournalOperation `json:"operation"`
+	Folder    string           `json:"folder"` // protected folder path (or vault dir for file vaults)
+	State     JournalStateName `json:"state"`
+	Timestamp time.Time        `json:"timestamp"`
 }
 
 // ManifestEntry represents a single file in the vault manifest.
@@ -48,9 +50,9 @@ func LockFolder(encKey []byte, folderPath string, progress ProgressFunc) error {
 	}
 
 	journal := &JournalState{
-		Operation: "lock",
+		Operation: OpLock,
 		Folder:    folderPath,
-		State:     "encrypting",
+		State:     StateEncrypting,
 		Timestamp: time.Now(),
 	}
 	if err := writeJournal(folderPath, journal); err != nil {
@@ -83,14 +85,14 @@ func LockFolder(encKey []byte, folderPath string, progress ProgressFunc) error {
 	// give the same crash-safety guarantee at a fraction of the cost.
 	fsyncDataDir(folderPath)
 
-	journal.State = "removing-originals"
+	journal.State = StateRemovingOriginals
 	if err := writeJournal(folderPath, journal); err != nil {
 		return fmt.Errorf("updating journal: %w", err)
 	}
 
 	removeOriginals(files, folderPath)
 
-	journal.State = "complete"
+	journal.State = StateComplete
 	_ = writeJournal(folderPath, journal)
 	removeJournal(folderPath)
 
@@ -107,9 +109,9 @@ func UnlockFolder(encKey []byte, folderPath string, progress ProgressFunc) error
 	}
 
 	journal := &JournalState{
-		Operation: "unlock",
+		Operation: OpUnlock,
 		Folder:    folderPath,
-		State:     "decrypting",
+		State:     StateDecrypting,
 		Timestamp: time.Now(),
 	}
 	if err := writeJournal(folderPath, journal); err != nil {
@@ -120,7 +122,7 @@ func UnlockFolder(encKey []byte, folderPath string, progress ProgressFunc) error
 		return err
 	}
 
-	journal.State = "removing-encrypted"
+	journal.State = StateRemovingEncrypted
 	if err := writeJournal(folderPath, journal); err != nil {
 		return fmt.Errorf("updating journal: %w", err)
 	}
@@ -128,7 +130,7 @@ func UnlockFolder(encKey []byte, folderPath string, progress ProgressFunc) error
 	removeEncryptedData(folderPath)
 	_ = os.Remove(manifestPath(folderPath))
 
-	journal.State = "complete"
+	journal.State = StateComplete
 	_ = writeJournal(folderPath, journal)
 	removeJournal(folderPath)
 
@@ -136,36 +138,19 @@ func UnlockFolder(encKey []byte, folderPath string, progress ProgressFunc) error
 }
 
 // RecoverFromJournal checks for an interrupted lock/unlock and recovers.
+// Looks up the recovery action for journal.(Operation, State) in
+// folderRecovery and runs it. Missing entries are treated as no-op.
+// The journal is always removed at the end.
 func RecoverFromJournal(folderPath string) error {
 	journal, err := readJournal(folderPath)
 	if err != nil {
 		return nil
 	}
-
-	switch journal.Operation {
-	case "lock":
-		switch journal.State {
-		case "encrypting":
-			// Originals intact, remove partial encrypted data
-			removeEncryptedData(folderPath)
-			_ = os.Remove(manifestPath(folderPath))
-		case "removing-originals":
-			// All encrypted, some originals may remain — that's fine
-		}
-	case "unlock":
-		switch journal.State {
-		case "decrypting":
-			// Encrypted data is intact in .monban-data/. Remove any
-			// partially-decrypted plaintext files so the vault is left
-			// in a clean locked state for the user to re-trigger unlock.
-			removePartialDecrypts(folderPath)
-		case "removing-encrypted":
-			// Decrypted files written, resume cleanup
-			removeEncryptedData(folderPath)
-			_ = os.Remove(manifestPath(folderPath))
+	if ops, ok := folderRecovery[journal.Operation]; ok {
+		if fn, ok := ops[journal.State]; ok {
+			_ = fn(folderPath)
 		}
 	}
-
 	removeJournal(folderPath)
 	return nil
 }
@@ -210,9 +195,9 @@ func LockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 	}
 
 	journal := &JournalState{
-		Operation: "lock",
+		Operation: OpLock,
 		Folder:    filePath,
-		State:     "encrypting",
+		State:     StateEncrypting,
 		Timestamp: time.Now(),
 	}
 	if err := writeJournal(vaultDir, journal); err != nil {
@@ -245,7 +230,7 @@ func LockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 	// LockFolder); single-file vaults handle their own sync here.
 	_ = fsyncPath(encPath)
 
-	journal.State = "removing-originals"
+	journal.State = StateRemovingOriginals
 	if err := writeJournal(vaultDir, journal); err != nil {
 		return fmt.Errorf("updating journal: %w", err)
 	}
@@ -255,7 +240,7 @@ func LockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 		progress(info.Size())
 	}
 
-	journal.State = "complete"
+	journal.State = StateComplete
 	_ = writeJournal(vaultDir, journal)
 	removeJournal(vaultDir)
 
@@ -277,9 +262,9 @@ func UnlockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 	entry := manifest.Files[0]
 
 	journal := &JournalState{
-		Operation: "unlock",
+		Operation: OpUnlock,
 		Folder:    filePath,
-		State:     "decrypting",
+		State:     StateDecrypting,
 		Timestamp: time.Now(),
 	}
 	if err := writeJournal(vaultDir, journal); err != nil {
@@ -294,7 +279,7 @@ func UnlockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 	_ = os.Chmod(filePath, entry.Mode)
 	_ = os.Chtimes(filePath, entry.ModTime, entry.ModTime)
 
-	journal.State = "removing-encrypted"
+	journal.State = StateRemovingEncrypted
 	if err := writeJournal(vaultDir, journal); err != nil {
 		return fmt.Errorf("updating journal: %w", err)
 	}
@@ -308,34 +293,20 @@ func UnlockFile(encKey []byte, filePath string, progress ProgressFunc) error {
 }
 
 // RecoverFileFromJournal checks for an interrupted file lock/unlock and recovers.
+// Looks up the recovery action for journal.(Operation, State) in
+// fileRecovery and runs it. Missing entries are treated as no-op.
+// The journal is always removed at the end.
 func RecoverFileFromJournal(filePath string) error {
 	vaultDir := fileVaultDir(filePath)
 	journal, err := readJournal(vaultDir)
 	if err != nil {
 		return nil // no journal
 	}
-
-	switch journal.Operation {
-	case "lock":
-		switch journal.State {
-		case "encrypting":
-			// Original intact, remove partial vault dir
-			_ = os.RemoveAll(vaultDir)
-		case "removing-originals":
-			// Encrypted data written, original may or may not exist — fine
-		}
-	case "unlock":
-		switch journal.State {
-		case "decrypting":
-			// Encrypted data intact in vault dir. Remove the partially
-			// decrypted file so the vault stays in a clean locked state.
-			_ = os.Remove(filePath)
-		case "removing-encrypted":
-			// Decrypted file written, resume cleanup
-			_ = os.RemoveAll(vaultDir)
+	if ops, ok := fileRecovery[journal.Operation]; ok {
+		if fn, ok := ops[journal.State]; ok {
+			_ = fn(filePath)
 		}
 	}
-
 	removeJournal(vaultDir)
 	return nil
 }

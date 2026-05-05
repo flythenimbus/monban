@@ -29,36 +29,25 @@ func (a *App) UpdateSettings(settings CombinedSettings, pin string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	sc, err := monban.LoadSecureConfig()
-	if err != nil {
-		return fmt.Errorf("loading secure config: %w", err)
-	}
-
-	prevForceAuth := sc.ForceAuthentication
-
-	// Fresh FIDO2 assertion — all settings are security-relevant.
-	masterSecret, err := a.fidoReauth(pin)
-	if err != nil {
-		return fmt.Errorf("FIDO2 authorization required: %w", err)
-	}
-	defer monban.ZeroBytes(masterSecret)
-
-	sc.OpenOnStartup = settings.OpenOnStartup
-	sc.ForceAuthentication = settings.ForceAuthentication
-
-	if settings.OpenOnStartup {
-		InstallLaunchAgent()
-	} else {
-		RemoveLaunchAgent()
-	}
-
-	hmacSalt, err := sc.DecodeHmacSalt()
+	var prevForceAuth bool
+	err := a.withAuthConfigMutation(pin,
+		func(sc *monban.SecureConfig) error {
+			prevForceAuth = sc.ForceAuthentication
+			return nil
+		},
+		func(sc *monban.SecureConfig, _ *monban.MasterSecret, _ []byte) error {
+			sc.OpenOnStartup = settings.OpenOnStartup
+			sc.ForceAuthentication = settings.ForceAuthentication
+			if settings.OpenOnStartup {
+				InstallLaunchAgent()
+			} else {
+				RemoveLaunchAgent()
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		return err
-	}
-
-	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
-		return fmt.Errorf("applying settings: %w", err)
 	}
 
 	if settings.ForceAuthentication && !prevForceAuth && !hasAccessibilityPermission() {
@@ -99,45 +88,34 @@ func (a *App) RemoveKey(credentialID string, pin string) error {
 		return fmt.Errorf("must be unlocked to remove a key")
 	}
 
-	sc, err := monban.LoadSecureConfig()
+	var removed monban.CredentialEntry
+	err := a.withAuthConfigMutation(pin,
+		func(sc *monban.SecureConfig) error {
+			if len(sc.Credentials) <= 1 {
+				return fmt.Errorf("cannot remove the last registered key")
+			}
+			for _, c := range sc.Credentials {
+				if c.CredentialID == credentialID {
+					removed = c
+					return nil
+				}
+			}
+			return fmt.Errorf("credential not found")
+		},
+		func(sc *monban.SecureConfig, _ *monban.MasterSecret, _ []byte) error {
+			for i, c := range sc.Credentials {
+				if c.CredentialID == credentialID {
+					sc.Credentials = append(sc.Credentials[:i], sc.Credentials[i+1:]...)
+					return nil
+				}
+			}
+			return fmt.Errorf("credential not found")
+		},
+	)
 	if err != nil {
 		return err
 	}
 
-	if len(sc.Credentials) <= 1 {
-		return fmt.Errorf("cannot remove the last registered key")
-	}
-
-	idx := -1
-	for i, c := range sc.Credentials {
-		if c.CredentialID == credentialID {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		return fmt.Errorf("credential not found")
-	}
-
-	masterSecret, err := a.fidoReauth(pin)
-	if err != nil {
-		return fmt.Errorf("FIDO2 authorization required: %w", err)
-	}
-	defer monban.ZeroBytes(masterSecret)
-
-	removed := sc.Credentials[idx]
-	sc.Credentials = append(sc.Credentials[:idx], sc.Credentials[idx+1:]...)
-
-	hmacSalt, err := sc.DecodeHmacSalt()
-	if err != nil {
-		return err
-	}
-
-	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
-		return fmt.Errorf("saving secure config: %w", err)
-	}
-
-	a.secureCfg = sc
 	a.pluginHost.Fire("on:key_removed", map[string]any{
 		"credentialID": removed.CredentialID,
 		"label":        removed.Label,

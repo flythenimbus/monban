@@ -166,13 +166,13 @@ func TestGenerateMasterSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(secret) != 64 {
-		t.Errorf("expected 64-byte secret, got %d", len(secret))
+	if len(secret.bytes) != 64 {
+		t.Errorf("expected 64-byte secret, got %d", len(secret.bytes))
 	}
 
 	// Should not be all zeros
 	allZero := true
-	for _, b := range secret {
+	for _, b := range secret.bytes {
 		if b != 0 {
 			allZero = false
 			break

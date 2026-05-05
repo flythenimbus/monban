@@ -20,48 +20,6 @@ import (
 // workers; implementations must be safe under that. May be nil.
 type ProgressFunc func(fileBytes int64)
 
-// LockVaultEntry locks a single vault entry (file or folder), skipping if already locked.
-// The optional progress callback is invoked once per processed file.
-func LockVaultEntry(encKey []byte, v VaultEntry, progress ProgressFunc) error {
-	if v.IsFile() {
-		if IsFileLocked(v.Path) {
-			return nil
-		}
-		if err := LockFile(encKey, v.Path, progress); err != nil {
-			return fmt.Errorf("locking file %s: %w", v.Label, err)
-		}
-	} else {
-		if IsLocked(v.Path) {
-			return nil
-		}
-		if err := LockFolder(encKey, v.Path, progress); err != nil {
-			return fmt.Errorf("locking vault %s: %w", v.Label, err)
-		}
-	}
-	return nil
-}
-
-// UnlockVaultEntry unlocks a single vault entry (file or folder), skipping if already unlocked.
-// The optional progress callback is invoked once per processed file.
-func UnlockVaultEntry(encKey []byte, v VaultEntry, progress ProgressFunc) error {
-	if v.IsFile() {
-		if !IsFileLocked(v.Path) {
-			return nil
-		}
-		if err := UnlockFile(encKey, v.Path, progress); err != nil {
-			return fmt.Errorf("unlocking file %s: %w", v.Label, err)
-		}
-	} else {
-		if !IsLocked(v.Path) {
-			return nil
-		}
-		if err := UnlockFolder(encKey, v.Path, progress); err != nil {
-			return fmt.Errorf("unlocking vault %s: %w", v.Label, err)
-		}
-	}
-	return nil
-}
-
 // FindVaultIndex returns the index of a vault entry matching the given path, or -1 if not found.
 func FindVaultIndex(vaults []VaultEntry, path string) int {
 	for i, v := range vaults {

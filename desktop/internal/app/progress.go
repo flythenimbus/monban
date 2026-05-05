@@ -1,7 +1,6 @@
 package app
 
 import (
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,20 +96,7 @@ func (a *App) maybeProgressForUnlock(key []byte, v monban.VaultEntry) *progressE
 // Returns zeros (no progress) for entries that aren't currently
 // lockable — i.e. already locked, missing, or unreadable.
 func lockTotals(v monban.VaultEntry) (files, bytes int64) {
-	if v.IsFile() {
-		if monban.IsFileLocked(v.Path) {
-			return 0, 0
-		}
-		info, err := os.Stat(v.Path)
-		if err != nil {
-			return 0, 0
-		}
-		return 1, info.Size()
-	}
-	if monban.IsLocked(v.Path) {
-		return 0, 0
-	}
-	f, b, _ := monban.FolderStats(v.Path)
+	f, b, _ := monban.VaultFor(v).PlaintextStats()
 	return f, b
 }
 
@@ -118,17 +104,7 @@ func lockTotals(v monban.VaultEntry) (files, bytes int64) {
 // vault entry, read from its encrypted manifest. Returns zeros if the
 // vault is already unlocked or the manifest can't be read.
 func unlockTotals(key []byte, v monban.VaultEntry) (files, bytes int64) {
-	if v.IsFile() {
-		if !monban.IsFileLocked(v.Path) {
-			return 0, 0
-		}
-		f, b, _ := monban.ManifestStats(key, monban.FileVaultDirOf(v.Path))
-		return f, b
-	}
-	if !monban.IsLocked(v.Path) {
-		return 0, 0
-	}
-	f, b, _ := monban.ManifestStats(key, v.Path)
+	f, b, _ := monban.VaultFor(v).LockedStats(key)
 	return f, b
 }
 
@@ -179,9 +155,9 @@ func (p *progressEmitter) FileDone(bytes int64) {
 }
 
 // Func returns a monban.ProgressFunc bound to this emitter, suitable
-// for passing into LockVaultEntry / UnlockVaultEntry / LockFolder /
-// UnlockFolder. Returns nil if the emitter itself is nil so callers
-// can pre-emptively short-circuit when no window is attached.
+// for passing into Vault.Lock / Vault.Unlock. Returns nil if the
+// emitter itself is nil so callers can pre-emptively short-circuit
+// when no window is attached.
 func (p *progressEmitter) Func() monban.ProgressFunc {
 	if p == nil {
 		return nil

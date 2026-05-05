@@ -4,7 +4,6 @@ import { AdminProvider, useAdmin } from "./AdminContext";
 import { AboutTab } from "./tabs/AboutTab";
 import { GeneralTab } from "./tabs/GeneralTab";
 import { KeysTab } from "./tabs/KeysTab";
-import { PluginsTab } from "./tabs/PluginsTab";
 
 interface AdminPanelProps {
 	rollbackWarning?: boolean;
@@ -53,11 +52,6 @@ function AdminPanelInner({
 						key: "keys",
 						label: "Keys",
 						content: <KeysTab />,
-					},
-					{
-						key: "plugins",
-						label: "Plugins",
-						content: <PluginsTab />,
 					},
 					{
 						key: "about",

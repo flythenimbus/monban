@@ -56,8 +56,8 @@ type App struct {
 	mu           sync.Mutex
 	secureCfg    *monban.SecureConfig
 	locked       bool
-	masterSecret []byte // in-memory only, zeroed on lock
-	encKey       []byte // derived file encryption key, zeroed on lock
+	masterSecret *monban.MasterSecret // in-memory only, zeroed on lock
+	encKey       []byte                // derived file encryption key, zeroed on lock
 	wailsApp     *application.App
 	window       *application.WebviewWindow
 	pluginHost   *plugin.Host
@@ -300,7 +300,7 @@ func (a *App) InstallPlugin(name, pin string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("FIDO2 authorization required: %w", err)
 	}
-	defer monban.ZeroBytes(masterSecret)
+	defer masterSecret.Zero()
 
 	pluginsDir := filepath.Join(monban.ConfigDir(), "plugins")
 	installer := plugin.NewInstaller(pluginsDir)
@@ -326,7 +326,7 @@ func (a *App) InstallPlugin(name, pin string) (retErr error) {
 		if rerr != nil {
 			return fmt.Errorf("second touch required before %s installer runs: %w", m.Name, rerr)
 		}
-		monban.ZeroBytes(confirmSecret)
+		confirmSecret.Zero()
 		return nil
 	}
 
@@ -379,41 +379,25 @@ func (a *App) UninstallPlugin(name string, pin string) error {
 		return fmt.Errorf("plugin %q not loaded", name)
 	}
 
-	sc, err := monban.LoadSecureConfig()
-	if err != nil {
-		return fmt.Errorf("loading secure config: %w", err)
-	}
+	return a.withAuthConfigMutation(pin, nil,
+		func(sc *monban.SecureConfig, _ *monban.MasterSecret, _ []byte) error {
+			unloadCtx, unloadCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer unloadCancel()
+			_ = a.pluginHost.Unload(unloadCtx, name)
 
-	masterSecret, err := a.fidoReauth(pin)
-	if err != nil {
-		return fmt.Errorf("FIDO2 authorization required: %w", err)
-	}
-	defer monban.ZeroBytes(masterSecret)
+			monban.UnlockConfigDir()
+			rmErr := removeAll(dir)
+			monban.LockConfigDir()
+			if rmErr != nil {
+				return fmt.Errorf("removing plugin dir: %w", rmErr)
+			}
 
-	unloadCtx, unloadCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer unloadCancel()
-	_ = a.pluginHost.Unload(unloadCtx, name)
-
-	monban.UnlockConfigDir()
-	rmErr := removeAll(dir)
-	monban.LockConfigDir()
-	if rmErr != nil {
-		return fmt.Errorf("removing plugin dir: %w", rmErr)
-	}
-
-	if sc.PluginSettings != nil {
-		delete(sc.PluginSettings, name)
-	}
-
-	hmacSalt, err := sc.DecodeHmacSalt()
-	if err != nil {
-		return err
-	}
-	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
-		return fmt.Errorf("saving secure config: %w", err)
-	}
-	a.secureCfg = sc
-	return nil
+			if sc.PluginSettings != nil {
+				delete(sc.PluginSettings, name)
+			}
+			return nil
+		},
+	)
 }
 
 // GetPluginSettings returns the persisted settings blob for the named
@@ -448,35 +432,23 @@ func (a *App) UpdatePluginSettings(name string, settings json.RawMessage, pin st
 		return fmt.Errorf("must be unlocked to change plugin settings")
 	}
 
-	sc, err := monban.LoadSecureConfig()
-	if err != nil {
-		return fmt.Errorf("loading secure config: %w", err)
-	}
-
-	masterSecret, err := a.fidoReauth(pin)
-	if err != nil {
-		return fmt.Errorf("FIDO2 authorization required: %w", err)
-	}
-	defer monban.ZeroBytes(masterSecret)
-
-	// Normalise: treat empty/nil as absence so the HMAC stays stable.
-	if sc.PluginSettings == nil {
-		sc.PluginSettings = map[string]json.RawMessage{}
-	}
-	if len(settings) == 0 {
-		delete(sc.PluginSettings, name)
-	} else {
-		sc.PluginSettings[name] = settings
-	}
-
-	hmacSalt, err := sc.DecodeHmacSalt()
+	err := a.withAuthConfigMutation(pin, nil,
+		func(sc *monban.SecureConfig, _ *monban.MasterSecret, _ []byte) error {
+			// Normalise: treat empty/nil as absence so the HMAC stays stable.
+			if sc.PluginSettings == nil {
+				sc.PluginSettings = map[string]json.RawMessage{}
+			}
+			if len(settings) == 0 {
+				delete(sc.PluginSettings, name)
+			} else {
+				sc.PluginSettings[name] = settings
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		return err
 	}
-	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
-		return fmt.Errorf("saving secure config: %w", err)
-	}
-	a.secureCfg = sc
 
 	// Best-effort push to the running plugin subprocess. If the plugin
 	// crashed the reconfig just logs — settings are already persisted.
@@ -528,7 +500,7 @@ func (a *App) RespondPluginPinTouch(id string, pin string) error {
 		reply <- pinTouchReply{ok: false, err: err}
 		return err
 	}
-	monban.ZeroBytes(masterSecret)
+	masterSecret.Zero()
 
 	reply <- pinTouchReply{ok: true}
 	return nil
@@ -561,7 +533,7 @@ func (a *App) handlePluginAssertWithPin(_ context.Context, pin string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	monban.ZeroBytes(masterSecret)
+	masterSecret.Zero()
 	return true, nil
 }
 
@@ -624,13 +596,65 @@ func (a *App) handlePluginPinTouch(ctx context.Context, req plugin.PinTouchReque
 	}
 }
 
+// withAuthConfigMutation runs a FIDO2-authenticated mutation against the
+// secure config. Caller must hold a.mu.
+//
+//  1. Loads SecureConfig fresh from disk.
+//  2. Calls prepare(sc) if non-nil (validation + work using a.encKey is OK).
+//  3. Performs FIDO2 re-auth, deriving a fresh master secret.
+//  4. Calls apply(sc, masterSecret, hmacSalt) if non-nil.
+//  5. Increments counter, signs, saves, writes encrypted counter.
+//  6. Updates a.secureCfg pointer to the saved config.
+//
+// The fresh master secret is zeroed before return.
+func (a *App) withAuthConfigMutation(
+	pin string,
+	prepare func(sc *monban.SecureConfig) error,
+	apply func(sc *monban.SecureConfig, masterSecret *monban.MasterSecret, hmacSalt []byte) error,
+) error {
+	sc, err := monban.LoadSecureConfig()
+	if err != nil {
+		return fmt.Errorf("loading secure config: %w", err)
+	}
+
+	if prepare != nil {
+		if err := prepare(sc); err != nil {
+			return err
+		}
+	}
+
+	masterSecret, err := a.fidoReauth(pin)
+	if err != nil {
+		return fmt.Errorf("FIDO2 authorization required: %w", err)
+	}
+	defer masterSecret.Zero()
+
+	hmacSalt, err := sc.DecodeHmacSalt()
+	if err != nil {
+		return err
+	}
+
+	if apply != nil {
+		if err := apply(sc, masterSecret, hmacSalt); err != nil {
+			return err
+		}
+	}
+
+	if err := a.saveSignedSecureConfig(sc, masterSecret, hmacSalt); err != nil {
+		return fmt.Errorf("saving secure config: %w", err)
+	}
+
+	a.secureCfg = sc
+	return nil
+}
+
 // saveSignedSecureConfig increments the counter, signs the config, saves it,
 // and writes the encrypted counter file. Caller must hold a.mu and ensure
-// masterSecret, hmacSalt, and encKey are valid.
-func (a *App) saveSignedSecureConfig(sc *monban.SecureConfig, masterSecret, hmacSalt []byte) error {
+// masterSecret and hmacSalt are valid.
+func (a *App) saveSignedSecureConfig(sc *monban.SecureConfig, masterSecret *monban.MasterSecret, hmacSalt []byte) error {
 	sc.ConfigCounter++
 
-	if err := monban.SignSecureConfig(sc, masterSecret, hmacSalt); err != nil {
+	if err := masterSecret.SignConfig(sc, hmacSalt); err != nil {
 		return fmt.Errorf("signing secure config: %w", err)
 	}
 	if err := monban.SaveSecureConfig(sc); err != nil {
@@ -642,7 +666,7 @@ func (a *App) saveSignedSecureConfig(sc *monban.SecureConfig, masterSecret, hmac
 	if encKey == nil {
 		// During registration, encKey isn't set yet — derive it
 		var err error
-		encKey, err = monban.DeriveEncryptionKey(masterSecret, hmacSalt)
+		encKey, err = masterSecret.FileEncKey(hmacSalt)
 		if err != nil {
 			return fmt.Errorf("deriving enc key for counter: %w", err)
 		}
@@ -657,9 +681,9 @@ func (a *App) saveSignedSecureConfig(sc *monban.SecureConfig, masterSecret, hmac
 }
 
 // fidoReauth performs FIDO2 re-authentication and returns a fresh master secret.
-// The caller is responsible for zeroing the returned secret.
+// The caller is responsible for Zero()-ing the returned secret.
 // Must be called with a.mu held.
-func (a *App) fidoReauth(pin string) ([]byte, error) {
+func (a *App) fidoReauth(pin string) (*monban.MasterSecret, error) {
 	sc, err := monban.LoadSecureConfig()
 	if err != nil {
 		return nil, fmt.Errorf("loading secure config: %w", err)
@@ -700,7 +724,7 @@ func (a *App) fidoReauth(pin string) ([]byte, error) {
 	}
 
 	if err := monban.VerifyAssertionWithSalt(sc.RpID, matchedCred, hmacSalt, assertion.AuthDataCBOR, assertion.Sig); err != nil {
-		monban.ZeroBytes(masterSecret)
+		masterSecret.Zero()
 		return nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
 

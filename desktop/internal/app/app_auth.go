@@ -27,7 +27,7 @@ func (a *App) Register(pin string, label string) error {
 
 	var sc *monban.SecureConfig
 	var hmacSalt []byte
-	var masterSecret []byte
+	var masterSecret *monban.MasterSecret
 	isFirstReg := !monban.SecureConfigExists()
 
 	if !isFirstReg {
@@ -45,7 +45,7 @@ func (a *App) Register(pin string, label string) error {
 	if isFirstReg {
 		defer func() {
 			if !registered {
-				monban.ZeroBytes(masterSecret)
+				masterSecret.Zero()
 			}
 		}()
 	}
@@ -73,7 +73,7 @@ func (a *App) Register(pin string, label string) error {
 		return err
 	}
 
-	wrapped, err := monban.WrapKey(wrappingKey, masterSecret)
+	wrapped, err := masterSecret.Wrap(wrappingKey)
 	if err != nil {
 		return fmt.Errorf("wrapping master secret: %w", err)
 	}
@@ -93,7 +93,7 @@ func (a *App) Register(pin string, label string) error {
 	}
 
 	// Derive encryption key and unlock
-	encKey, err := monban.DeriveEncryptionKey(masterSecret, hmacSalt)
+	encKey, err := masterSecret.FileEncKey(hmacSalt)
 	if err != nil {
 		return err
 	}
@@ -168,14 +168,14 @@ func (a *App) Unlock(pin string) error {
 	}
 
 	// Verify secure config HMAC (tamper detection)
-	if err := monban.VerifySecureConfig(sc, masterSecret, hmacSalt); err != nil {
+	if err := masterSecret.VerifyConfig(sc, hmacSalt); err != nil {
 		if err == monban.ErrConfigUnsigned {
 			// First unlock after upgrade — sign and write counter
 			log.Println("secure config unsigned, signing on first unlock")
 			sc.ConfigCounter++
-			if signErr := monban.SignSecureConfig(sc, masterSecret, hmacSalt); signErr == nil {
+			if signErr := masterSecret.SignConfig(sc, hmacSalt); signErr == nil {
 				_ = monban.SaveSecureConfig(sc)
-				encKeyTmp, dErr := monban.DeriveEncryptionKey(masterSecret, hmacSalt)
+				encKeyTmp, dErr := masterSecret.FileEncKey(hmacSalt)
 				if dErr == nil {
 					_ = monban.SaveCounter(encKeyTmp, sc.ConfigCounter)
 					monban.ZeroBytes(encKeyTmp)
@@ -187,7 +187,7 @@ func (a *App) Unlock(pin string) error {
 	}
 
 	// Derive file encryption key
-	encKey, err := monban.DeriveEncryptionKey(masterSecret, hmacSalt)
+	encKey, err := masterSecret.FileEncKey(hmacSalt)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (a *App) Unlock(pin string) error {
 	if counterMissing || sc.ConfigCounter < storedCounter {
 		log.Printf("monban: config rollback detected (config=%d, counter=%d) — healing", sc.ConfigCounter, storedCounter)
 		sc.ConfigCounter = storedCounter
-		if signErr := monban.SignSecureConfig(sc, masterSecret, hmacSalt); signErr == nil {
+		if signErr := masterSecret.SignConfig(sc, hmacSalt); signErr == nil {
 			_ = monban.SaveSecureConfig(sc)
 			_ = monban.SaveCounter(encKey, sc.ConfigCounter)
 		}
@@ -218,9 +218,18 @@ func (a *App) Unlock(pin string) error {
 	// behind. Fail-closed: any plugin error/timeout counts as deny;
 	// escape via `monban --disable-plugins`.
 	if gateErr := a.runAuthGate(sc); gateErr != nil {
-		monban.ZeroBytes(masterSecret)
+		masterSecret.Zero()
 		monban.ZeroBytes(encKey)
 		return gateErr
+	}
+
+	// Heal any vault left in an inconsistent state by a crashed prior
+	// lock/unlock. No-op for vaults without a journal file. Errors are
+	// logged but don't abort — the next operation retries recovery.
+	for _, v := range sc.Vaults {
+		if err := monban.VaultFor(v).Recover(); err != nil {
+			log.Printf("monban: recovery for %s: %v", v.Path, err)
+		}
 	}
 
 	// Pre-walk eager vaults to compute total files/bytes for progress.
@@ -233,21 +242,9 @@ func (a *App) Unlock(pin string) error {
 		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
 			continue
 		}
-		if v.IsFile() {
-			if !monban.IsFileLocked(v.Path) {
-				continue
-			}
-			f, b, _ := monban.ManifestStats(encKey, monban.FileVaultDirOf(v.Path))
-			totalFiles += f
-			totalBytes += b
-		} else {
-			if !monban.IsLocked(v.Path) {
-				continue
-			}
-			f, b, _ := monban.ManifestStats(encKey, v.Path)
-			totalFiles += f
-			totalBytes += b
-		}
+		f, b, _ := monban.VaultFor(v).LockedStats(encKey)
+		totalFiles += f
+		totalBytes += b
 	}
 	progress := newProgressEmitter(a.window, "unlock", totalFiles, totalBytes)
 	if totalFiles > 0 {
@@ -260,7 +257,7 @@ func (a *App) Unlock(pin string) error {
 		if sc.VaultDecryptMode(v.Path) != monban.DecryptEager {
 			continue
 		}
-		if err := monban.UnlockVaultEntry(encKey, v, progress.Func()); err != nil {
+		if err := monban.VaultFor(v).Unlock(encKey, progress.Func()); err != nil {
 			return err
 		}
 	}
@@ -316,22 +313,9 @@ func (a *App) Lock() error {
 		totalBytes int64
 	)
 	for _, v := range a.secureCfg.Vaults {
-		if v.IsFile() {
-			if monban.IsFileLocked(v.Path) {
-				continue
-			}
-			if info, statErr := os.Stat(v.Path); statErr == nil {
-				totalFiles++
-				totalBytes += info.Size()
-			}
-		} else {
-			if monban.IsLocked(v.Path) {
-				continue
-			}
-			f, b, _ := monban.FolderStats(v.Path)
-			totalFiles += f
-			totalBytes += b
-		}
+		f, b, _ := monban.VaultFor(v).PlaintextStats()
+		totalFiles += f
+		totalBytes += b
 	}
 	progress := newProgressEmitter(a.window, "lock", totalFiles, totalBytes)
 	if totalFiles > 0 {
@@ -341,21 +325,22 @@ func (a *App) Lock() error {
 
 	var lockErr error
 	for _, v := range a.secureCfg.Vaults {
+		vault := monban.VaultFor(v)
 		mode := a.secureCfg.VaultDecryptMode(v.Path)
 		if mode == monban.DecryptLazyStrict {
-			lazyKey, err := monban.DeriveLazyStrictKey(a.masterSecret, hmacSalt, v.Path)
+			lazyKey, err := a.masterSecret.LazyStrictKey(hmacSalt, v.Path)
 			if err != nil {
 				lockErr = fmt.Errorf("deriving lazy strict key: %w", err)
 				break
 			}
-			if err := monban.LockVaultEntry(lazyKey, v, progress.Func()); err != nil {
+			if err := vault.Lock(lazyKey, progress.Func()); err != nil {
 				monban.ZeroBytes(lazyKey)
 				lockErr = err
 				break
 			}
 			monban.ZeroBytes(lazyKey)
 		} else {
-			if err := monban.LockVaultEntry(a.encKey, v, progress.Func()); err != nil {
+			if err := vault.Lock(a.encKey, progress.Func()); err != nil {
 				lockErr = err
 				break
 			}
@@ -365,7 +350,7 @@ func (a *App) Lock() error {
 	vaults := a.secureCfg.Vaults
 
 	// Always zero secrets and re-lock directory, even on error
-	monban.ZeroBytes(a.masterSecret)
+	a.masterSecret.Zero()
 	monban.ZeroBytes(a.encKey)
 	a.masterSecret = nil
 	a.encKey = nil
@@ -429,7 +414,7 @@ func monbanUser() (string, error) {
 
 // prepareAdditionalKey loads the existing secure config and master secret
 // for wrapping with a new key. The app must be unlocked.
-func (a *App) prepareAdditionalKey() (*monban.SecureConfig, []byte, []byte, error) {
+func (a *App) prepareAdditionalKey() (*monban.SecureConfig, []byte, *monban.MasterSecret, error) {
 	if a.locked || a.masterSecret == nil {
 		return nil, nil, nil, fmt.Errorf("must be unlocked to add a new key")
 	}
@@ -446,7 +431,7 @@ func (a *App) prepareAdditionalKey() (*monban.SecureConfig, []byte, []byte, erro
 
 // prepareFirstRegistration generates a fresh master secret, hmac salt,
 // and secure config for initial setup.
-func (a *App) prepareFirstRegistration() (*monban.SecureConfig, []byte, []byte, error) {
+func (a *App) prepareFirstRegistration() (*monban.SecureConfig, []byte, *monban.MasterSecret, error) {
 	hmacSalt, err := monban.GenerateHmacSalt()
 	if err != nil {
 		return nil, nil, nil, err
