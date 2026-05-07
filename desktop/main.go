@@ -27,8 +27,7 @@ func main() {
 
 	app := monbanapp.NewApp()
 
-	var wailsApp *application.App
-	wailsApp = application.New(application.Options{
+	wailsApp := application.New(application.Options{
 		Name:        "Monban",
 		Description: "Security key-based folder encryption",
 		Services: []application.Service{
