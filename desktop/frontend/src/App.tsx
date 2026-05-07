@@ -1,13 +1,14 @@
 import { Events } from "@wailsio/runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import { VaultProgressOverlay } from "./components";
 import { Lock } from "./components/icons/Lock";
+import { useVaultProgress } from "./hooks/useVaultProgress";
 import { AdminPanel } from "./screens/AdminPanel/AdminPanel";
 import {
 	type AuthorizeRequest,
 	AuthorizeScreen,
 } from "./screens/AuthorizeScreen/AuthorizeScreen";
+import { CryptoProgressScreen } from "./screens/CryptoProgressScreen/CryptoProgressScreen";
 import { LockScreen } from "./screens/LockScreen/LockScreen";
 import { SetupScreen } from "./screens/SetupScreen/SetupScreen";
 
@@ -19,6 +20,7 @@ function App() {
 	const [authorizeReq, setAuthorizeReq] = useState<AuthorizeRequest | null>(
 		null,
 	);
+	const vaultProgress = useVaultProgress();
 	// N14: second-FIDO2-touch overlay during plugin install_pkg. Named
 	// so the user knows the touch they're about to give authorizes
 	// running a system installer as root, not just the download step.
@@ -111,6 +113,13 @@ function App() {
 	}, [checkState, enterAuthorize]);
 
 	const body = (() => {
+		// Vault encrypt/decrypt takes over the window as a top-level
+		// screen, adjacent to setup/lock/admin/authorize. It owns its
+		// own size via useAutoResize so the host window collapses to
+		// just what the progress UI needs.
+		if (vaultProgress) {
+			return <CryptoProgressScreen progress={vaultProgress} />;
+		}
 		switch (view) {
 			case "loading":
 				return (
@@ -154,7 +163,6 @@ function App() {
 	return (
 		<>
 			{body}
-			<VaultProgressOverlay />
 			{secondTouchPlugin && (
 				<SecondTouchOverlay pluginName={secondTouchPlugin} />
 			)}

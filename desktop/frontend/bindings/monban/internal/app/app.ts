@@ -160,6 +160,17 @@ export function IsRegistered(): $CancellablePromise<boolean> {
 }
 
 /**
+ * IsShuttingDown reports whether a quit is in flight. ShouldQuit
+ * uses it to avoid kicking off a second Lock if the user clicks Quit
+ * twice while the first encrypt is still running, and WindowClosing
+ * uses it to allow the window to close during the actual termination
+ * pass instead of cancelling.
+ */
+export function IsShuttingDown(): $CancellablePromise<boolean> {
+    return $Call.ByID(723442745);
+}
+
+/**
  * ListAvailablePlugins returns every plugin in the embedded catalog that
  * can run on this platform, with installed-status resolved.
  */
@@ -259,6 +270,13 @@ export function RevealSecureConfig(): $CancellablePromise<void> {
     return $Call.ByID(204196149);
 }
 
+/**
+ * SetShuttingDown marks the app as shutting down. Idempotent.
+ */
+export function SetShuttingDown(): $CancellablePromise<void> {
+    return $Call.ByID(2511753747);
+}
+
 export function SetWailsApp(app: application$0.App | null): $CancellablePromise<void> {
     return $Call.ByID(1684889128, app);
 }
@@ -291,6 +309,15 @@ export function StartDeviceWatcher(): $CancellablePromise<void> {
  */
 export function StartPluginHost(): $CancellablePromise<void> {
     return $Call.ByID(4123584460);
+}
+
+/**
+ * SurfaceWindow brings the main window to the foreground (dock icon
+ * visible, window shown and focused). Used when quitting from the
+ * tray so the user sees the encryption progress screen.
+ */
+export function SurfaceWindow(): $CancellablePromise<void> {
+    return $Call.ByID(3802547278);
 }
 
 /**

@@ -27,7 +27,8 @@ func main() {
 
 	app := monbanapp.NewApp()
 
-	wailsApp := application.New(application.Options{
+	var wailsApp *application.App
+	wailsApp = application.New(application.Options{
 		Name:        "Monban",
 		Description: "Security key-based folder encryption",
 		Services: []application.Service{
@@ -37,16 +38,47 @@ func main() {
 			Handler: application.AssetFileServerFS(assets),
 		},
 		Mac: monbanapp.PlatformAppOptions(),
+		// Quit policy. By the time Cocoa fires ShouldQuit, the run
+		// loop is in applicationShouldTerminate: and Lock()ing inline
+		// would block the main thread for the entire encryption,
+		// leaving the webview unable to render progress. The tray
+		// Quit handler runs Lock first (it executes in its own
+		// goroutine — see Wails menuitem.go handleClick) and only
+		// then calls wailsApp.Quit(); by then locked=true and
+		// ShouldQuit just returns true. The cancel-and-reissue branch
+		// here exists only for Cmd+Q / dock-menu Quit, which have no
+		// pre-Quit hook of their own.
 		ShouldQuit: func() bool {
-			if app.IsLocked() && app.GetSettings().ForceAuthentication {
-				log.Println("monban: quit blocked (force authentication active)")
-				return false
+			if app.IsShuttingDown() {
+				return app.IsLocked()
 			}
-			return true
+			if app.IsLocked() {
+				if app.GetSettings().ForceAuthentication {
+					log.Println("monban: quit blocked (force authentication active)")
+					return false
+				}
+				return true
+			}
+			app.SetShuttingDown()
+			app.SurfaceWindow()
+			go func() {
+				if err := app.Lock(); err != nil {
+					log.Printf("monban: error locking on shutdown: %v", err)
+				}
+				app.ShutdownPluginHost()
+				// See tray Quit handler for why os.Exit instead of
+				// wailsApp.Quit: avoids hanging on the main-thread
+				// ExecJS backlog accumulated during encryption.
+				os.Exit(0)
+			}()
+			return false
 		},
 		OnShutdown: func() {
-			log.Println("monban: shutting down, locking vaults...")
+			log.Println("monban: shutting down")
 			app.ShutdownPluginHost()
+			// Defensive: signal handlers and platform hooks can also
+			// reach OnShutdown without going through ShouldQuit
+			// (SIGTERM, watchSleep, etc). Idempotent if already locked.
 			if err := app.Lock(); err != nil {
 				log.Printf("monban: error locking on shutdown: %v", err)
 			}
@@ -69,6 +101,12 @@ func main() {
 	})
 
 	win.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		// During the actual termination pass, let the window close
+		// so Cocoa can finish tearing down. Otherwise windowShouldClose
+		// returns NO and termination aborts (app appears frozen).
+		if app.IsShuttingDown() {
+			return
+		}
 		if app.IsLocked() && app.GetSettings().ForceAuthentication {
 			e.Cancel()
 			return
@@ -86,7 +124,39 @@ func main() {
 	})
 	trayMenu.AddSeparator()
 	trayMenu.Add("Quit").OnClick(func(ctx *application.Context) {
-		wailsApp.Quit()
+		// Tray-menu callbacks already run in their own goroutine, so
+		// Lock can run synchronously here without blocking the main
+		// thread. Surface the window first so the progress screen is
+		// visible while encryption runs.
+		//
+		// Why os.Exit instead of wailsApp.Quit:
+		// Every EmitEvent during a long encryption ultimately funnels
+		// through window.ExecJS → application.InvokeSync, which posts
+		// to the Cocoa main queue. After 30+ seconds of throttled
+		// progress updates, Wails' shutdown path (which also runs on
+		// the main thread, processing the queue serially) can hang
+		// behind the backlog and leave the window stuck at 100%.
+		// Vaults are already encrypted and secrets zeroed by the
+		// time we reach this point, so there's nothing critical that
+		// Wails' lifecycle cleanup needs to do. Exit directly.
+		if app.IsLocked() {
+			if app.GetSettings().ForceAuthentication {
+				log.Println("monban: quit blocked (force authentication active)")
+				return
+			}
+			wailsApp.Quit()
+			return
+		}
+		if app.IsShuttingDown() {
+			return
+		}
+		app.SetShuttingDown()
+		app.SurfaceWindow()
+		if err := app.Lock(); err != nil {
+			log.Printf("monban: error locking on shutdown: %v", err)
+		}
+		app.ShutdownPluginHost()
+		os.Exit(0)
 	})
 	systemTray.SetMenu(trayMenu)
 

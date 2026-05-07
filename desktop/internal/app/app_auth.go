@@ -296,6 +296,17 @@ func (a *App) Lock() error {
 		return fmt.Errorf("config not found")
 	}
 
+	// Idempotency: a second Lock() (e.g. ShouldQuit racing with the
+	// shutdown lifecycle, or sleep/session-resign hooks firing during
+	// a quit) is a no-op. Without this, the second caller would zero
+	// already-zeroed secrets and walk vaults with a nil encKey.
+	// Placed after the secureCfg check so existing callers that pass
+	// a freshly-locked App still see a meaningful error when config
+	// is missing.
+	if a.locked {
+		return nil
+	}
+
 	// Restore directory write permission for vault locking
 	monban.UnlockConfigDir()
 

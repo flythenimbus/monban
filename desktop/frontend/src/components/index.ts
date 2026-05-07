@@ -10,4 +10,3 @@ export { Select } from "./Select";
 export { StatusText } from "./StatusText";
 export { Tabs } from "./Tabs";
 export { Toggle } from "./Toggle";
-export { VaultProgressOverlay } from "./VaultProgressOverlay";

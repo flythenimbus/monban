@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"monban/internal/monban"
@@ -56,8 +57,9 @@ type App struct {
 	mu           sync.Mutex
 	secureCfg    *monban.SecureConfig
 	locked       bool
+	shuttingDown atomic.Bool          // set once a quit is in flight; read from ShouldQuit and WindowClosing
 	masterSecret *monban.MasterSecret // in-memory only, zeroed on lock
-	encKey       []byte                // derived file encryption key, zeroed on lock
+	encKey       []byte               // derived file encryption key, zeroed on lock
 	wailsApp     *application.App
 	window       *application.WebviewWindow
 	pluginHost   *plugin.Host
@@ -133,6 +135,17 @@ func (a *App) SetWindow(w *application.WebviewWindow) {
 	a.window = w
 }
 
+// SurfaceWindow brings the main window to the foreground (dock icon
+// visible, window shown and focused). Used when quitting from the
+// tray so the user sees the encryption progress screen.
+func (a *App) SurfaceWindow() {
+	showInDock()
+	if a.window != nil {
+		a.window.Show()
+		a.window.Focus()
+	}
+}
+
 func (a *App) SetWailsApp(app *application.App) {
 	a.wailsApp = app
 }
@@ -141,6 +154,20 @@ func (a *App) IsLocked() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.locked
+}
+
+// IsShuttingDown reports whether a quit is in flight. ShouldQuit
+// uses it to avoid kicking off a second Lock if the user clicks Quit
+// twice while the first encrypt is still running, and WindowClosing
+// uses it to allow the window to close during the actual termination
+// pass instead of cancelling.
+func (a *App) IsShuttingDown() bool {
+	return a.shuttingDown.Load()
+}
+
+// SetShuttingDown marks the app as shutting down. Idempotent.
+func (a *App) SetShuttingDown() {
+	a.shuttingDown.Store(true)
 }
 
 func (a *App) IsRegistered() bool {
